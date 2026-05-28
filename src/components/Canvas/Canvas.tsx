@@ -1,3 +1,13 @@
+/**
+ * @file Canvas.tsx
+ * Main canvas component for the Report Designer. Provides the primary visual editing
+ * surface where users design report layouts using a band-based paradigm (similar to
+ * FastReport / Jasper Reports). Supports two modes:
+ *   - **Edit Mode**: Interactive template editor with drag-and-drop, resize, snap
+ *     guides, rubber-band selection, and context menus.
+ *   - **Preview Mode**: Paginated report rendering with async data source support
+ *     and progress feedback.
+ */
 import React, { useRef, useEffect, useCallback, useState } from "react";
 import { useDesignerStore } from "../../store/designerStore";
 import { useDragEngine } from "../../hooks/useDragEngine";
@@ -18,6 +28,7 @@ import { ContextMenu } from "../ContextMenu/ContextMenu";
 import type { ContextMenuState } from "../ContextMenu/ContextMenu";
 import "./Canvas.css";
 
+/** Chinese labels for each band type, displayed in the band label sidebar. */
 const BAND_LABELS: Record<string, string> = {
   title: "标题",
   pageHeader: "页眉",
@@ -29,6 +40,21 @@ const BAND_LABELS: Record<string, string> = {
   pageFooter: "页脚",
 };
 
+/**
+ * Main Canvas component — the central editing surface of the Report Designer.
+ *
+ * Renders the report template as a visual page with bands, elements, grid, margins,
+ * and snap guides in edit mode. In preview mode, renders the fully paginated report
+ * with data-bound content.
+ *
+ * Key responsibilities:
+ * - Report preview rendering (sync/async with progress)
+ * - Ctrl+Wheel zoom handling
+ * - Drag-and-drop field placement from data source panel
+ * - Right-click context menu for bands, elements, and canvas
+ * - Rubber-band selection and element creation preview overlays
+ * - Snap alignment guide rendering
+ */
 export const Canvas: React.FC = () => {
   const {
     report,
@@ -52,25 +78,40 @@ export const Canvas: React.FC = () => {
     handleBandResizeStart,
     dragState,
   } = useDragEngine();
+
+  /** Ref to the outermost canvas container div. */
   const canvasRef = useRef<HTMLDivElement>(null);
+
+  /** The fully rendered report output (populated only in preview mode). */
   const [renderedReport, setRenderedReport] = useState<RenderedReport | null>(
     null,
   );
+
+  /** Current rendering stage label (e.g. "resolving" for data fetching). */
   const [renderStage, setRenderStage] = useState<string>("");
+
+  /** Percentage progress for async report rendering (0–100). */
   const [renderProgress, setRenderProgress] = useState(0);
+
+  /** State for the right-click context menu (position, type, target id). */
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
   const { width, height, marginTop, marginBottom, marginLeft, marginRight } =
     report.pageSettings;
+
+  /** Usable content width after subtracting left and right margins. */
   const contentWidth = width - marginLeft - marginRight;
 
-  // Render report when entering preview mode or data changes
+  // ─── Report Rendering (Preview Mode) ───────────────────────────
+  // Render report when entering preview mode or data changes.
+  // Uses async renderer for API/database sources, sync for static data.
   useEffect(() => {
     if (!previewMode) {
       setRenderedReport(null);
       return;
     }
 
+    // Determine whether any data sources require async resolution (API/database)
     const hasAsyncSources = report.dataSources.some(
       (ds) => ds.type === "api" || ds.type === "database",
     );
@@ -86,6 +127,7 @@ export const Canvas: React.FC = () => {
           setRenderStage("");
         })
         .catch(() => {
+          // Fallback to synchronous paginated rendering on async failure
           const result = renderReportPaginated(report);
           setRenderedReport(result);
           setRenderStage("");
@@ -96,7 +138,8 @@ export const Canvas: React.FC = () => {
     }
   }, [previewMode, report, report.dataSources, report.bands, report.elements]);
 
-  // Zoom with Ctrl+Wheel
+  // ─── Zoom Handling ─────────────────────────────────────────────
+  // Ctrl+Wheel zooms in/out the canvas viewport.
   useEffect(() => {
     const handleWheel = (e: WheelEvent) => {
       if (e.ctrlKey || e.metaKey) {
@@ -112,7 +155,9 @@ export const Canvas: React.FC = () => {
     }
   }, [zoom, setZoom]);
 
-  // Handle field drop from data source panel
+  // ─── Drag & Drop from Data Source Panel ────────────────────────
+  // When a field is dropped from the data source panel onto a band,
+  // create a new text element bound to that field at the drop position.
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
@@ -137,12 +182,15 @@ export const Canvas: React.FC = () => {
     [zoom, addElement],
   );
 
+  /** Allow drop by preventing default and signaling copy effect. */
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
   }, []);
 
-  // Right-click context menu
+  // ─── Right-Click Context Menu ──────────────────────────────────
+  // Determines context menu type based on what was right-clicked:
+  // element → element menu, band → band menu, else → canvas menu.
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
@@ -186,7 +234,11 @@ export const Canvas: React.FC = () => {
     [previewMode, report.bands],
   );
 
-  // Get band Y position (for labels)
+  /**
+   * Calculate the Y offset of a band by summing the heights of all
+   * bands that appear before it in the band order. Used for positioning
+   * band labels in the sidebar.
+   */
   const getBandY = (targetBandId: string) => {
     let y = 0;
     for (const band of report.bands) {
@@ -196,6 +248,7 @@ export const Canvas: React.FC = () => {
     return 0;
   };
 
+  /** Shorthand reference to the current drag state from the drag engine. */
   const st = dragState.current;
 
   // ─── Preview Mode: Render paginated report ───
@@ -387,11 +440,13 @@ export const Canvas: React.FC = () => {
               );
             })}
 
-            {/* Rubber band selection */}
+            {/* Rubber band selection rectangle — shown during drag-select within a band */}
             {st.mode === "rubber-band" &&
               st.rubberBandStart &&
               st.rubberBandEnd &&
               (() => {
+                // Compute cumulative Y offset of bands above the rubber-band's band,
+                // so the rectangle is positioned correctly within the content area
                 let bandYOff = 0;
                 for (const b of report.bands) {
                   if (b.id === st.rubberBandBandId) break;
@@ -416,7 +471,7 @@ export const Canvas: React.FC = () => {
                 );
               })()}
 
-            {/* Create preview */}
+            {/* Element creation preview — shown while dragging to create a new element */}
             {st.mode === "creating" &&
               st.moved &&
               (() => {
@@ -439,9 +494,10 @@ export const Canvas: React.FC = () => {
                 );
               })()}
 
-            {/* Snap alignment guides */}
+            {/* Snap alignment guides — horizontal/vertical lines shown during drag to indicate alignment */}
             {snapGuides.length > 0 &&
               (() => {
+                // Offset guides by the Y position of the active band so they appear at the right position
                 let bandYOffset = 0;
                 for (const band of report.bands) {
                   if (band.id === activeBandId) break;
@@ -473,8 +529,15 @@ export const Canvas: React.FC = () => {
 
 // ─── Preview Page ──────────────────────────────────────────────
 
+/**
+ * Renders a single page of the paginated preview output.
+ * Displays the page with proper margins and renders each band via PreviewBand.
+ * Wrapped in React.memo to avoid re-rendering when other pages change.
+ */
 const PreviewPage: React.FC<{
+  /** The rendered page data containing bands and page number. */
   page: RenderedPage;
+  /** Report-level page settings (dimensions, margins). */
   report: {
     pageSettings: {
       width: number;
@@ -501,6 +564,7 @@ const PreviewPage: React.FC<{
         transformOrigin: "top left",
       }}
     >
+      {/* Margin overlays — shaded areas showing non-printable margins */}
       <div
         className="page-margin"
         style={{ top: 0, left: 0, width: `${marginLeft}px`, height: "100%" }}
@@ -548,8 +612,15 @@ PreviewPage.displayName = "PreviewPage";
 
 // ─── Preview Band ──────────────────────────────────────────────
 
+/**
+ * Renders a single band within a preview page. Filters elements by their
+ * `printOn` property (controlling visibility per band type) and sorts by
+ * z-order for correct layering. Wrapped in React.memo for performance.
+ */
 const PreviewBand: React.FC<{
+  /** The pre-rendered band data with elements, data row, and styling. */
   renderedBand: RenderedBand;
+  /** Available content width after margins. */
   contentWidth: number;
 }> = React.memo(({ renderedBand, contentWidth }) => {
   const {
@@ -561,11 +632,14 @@ const PreviewBand: React.FC<{
     bandType,
   } = renderedBand;
 
+  // Filter elements based on printOn: only include elements whose printOn
+  // list includes this band's type; if printOn is empty, show on all bands.
   const filteredElements = elements.filter((el) => {
     if (!el.printOn || el.printOn.length === 0) return true;
     return el.printOn.includes(bandType as BandType);
   });
 
+  // Sort by z-order so elements render in the correct visual layer order
   const sorted = [...filteredElements].sort((a, b) => a.zOrder - b.zOrder);
 
   return (
@@ -579,6 +653,7 @@ const PreviewBand: React.FC<{
       data-band-id={renderedBand.bandId}
       data-band-type={bandType}
     >
+      {/* Render each element in z-order; all interaction handlers are no-ops in preview mode */}
       {sorted.map((el) => (
         <ElementRenderer
           key={el.id}

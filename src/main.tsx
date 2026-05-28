@@ -1,3 +1,8 @@
+/**
+ * Application entry point
+ *
+ * Mounts the root React component (App) into the DOM.
+ */
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'

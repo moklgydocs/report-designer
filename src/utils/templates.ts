@@ -1,12 +1,39 @@
+/**
+ * Report Template Factory
+ *
+ * Provides factory functions that create pre-built report definitions (Purchase Order,
+ * Sales Invoice) for the band-based visual report designer. Each template constructs a
+ * complete {@link Report} object including page settings, bands, elements, and sample data
+ * sources so the designer can render a realistic preview out of the box.
+ *
+ * The file is organized into:
+ * 1. Shared element factory helpers (txt, line, createDataTable, etc.)
+ * 2. Purchase Order template (createPurchaseOrderTemplate)
+ * 3. Sales Invoice template (createSalesInvoiceTemplate + createSalesInvoiceTable)
+ */
 import type { Report, Band, ReportElement, DataSource, TableElement } from '../types';
 
+/** Generates a unique identifier, falling back to a timestamp+random string if crypto.randomUUID is unavailable. */
 const uid = () => crypto.randomUUID?.() || Date.now().toString(36) + Math.random().toString(36).slice(2);
 
-/* ─── Element factory helpers ─── */
+/* ─── Shared Border Presets ─── */
 
+/** Solid black border of 1px width — used for visible borders. */
 const B = { style: 'solid' as const, width: 1, color: '#000000' };
+/** Invisible border (style "none") — used as the default / no-border preset. */
 const N = { style: 'none' as const, width: 1, color: '#000000' };
 
+/**
+ * Creates a text element with the given position, size, and optional styling.
+ *
+ * @param x       - X coordinate within the band (in report units / pixels)
+ * @param y       - Y coordinate within the band
+ * @param w       - Width of the text element
+ * @param h       - Height of the text element
+ * @param content - Display text (also used as the element name, truncated to 20 chars)
+ * @param opts    - Optional overrides for font size, weight, color, alignment, data binding, and per-side borders
+ * @returns A fully-formed ReportElement of type 'text'
+ */
 function txt(
   x: number, y: number, w: number, h: number,
   content: string,
@@ -42,6 +69,17 @@ function txt(
   } as ReportElement;
 }
 
+/**
+ * Creates a line element at the given position.
+ *
+ * @param x         - X coordinate
+ * @param y         - Y coordinate
+ * @param w         - Horizontal extent (for horizontal lines this is the length)
+ * @param h         - Vertical extent (typically 0 for a flat horizontal line)
+ * @param color     - Stroke color (defaults to black)
+ * @param lineWidth - Stroke width in pixels (defaults to 1)
+ * @returns A ReportElement of type 'line'
+ */
 function line(x: number, y: number, w: number, h: number, color = '#000000', lineWidth = 1): ReportElement {
   return {
     id: uid(), type: 'line', x, y, width: w, height: h,
@@ -50,15 +88,27 @@ function line(x: number, y: number, w: number, h: number, color = '#000000', lin
   } as ReportElement;
 }
 
-/** Create a data-only table (no header row) for the data band */
+/**
+ * Creates a data-only table (no header row) for the data band of the Purchase Order template.
+ *
+ * The table has 8 columns matching the purchase detail layout:
+ *   序号 | 物料编码 | 物料名称 | 规格型号 | 单位 | 数量 | 单价 | 金额
+ *
+ * @param contentW - Full content width of the page (page width minus left/right margins)
+ * @returns A TableElement containing a single data row with placeholder fields
+ */
 function createDataTable(contentW: number): TableElement {
+  // Column widths must match the header column definitions in the page header band
   const colWidths = [40, 90, 180, 120, 44, 56, 76, 76];
   const colIds = colWidths.map(() => uid());
   const dataRowId = uid();
 
+  // Placeholder tokens — will be replaced by actual data fields at render time
   const dataFields = ['{no}', '{code}', '{name}', '{spec}', '{unit}', '{qty}', '{price}', '{amount}'];
+  // Alignment per column: numbers right-aligned, text center/left-aligned
   const dataAligns: ('left' | 'center' | 'right')[] = ['center', 'center', 'left', 'center', 'center', 'right', 'right', 'right'];
 
+  // All cells get solid 1px black borders
   const cellBorder = {
     top: { style: 'solid' as const, width: 1, color: '#000000' },
     bottom: { style: 'solid' as const, width: 1, color: '#000000' },
@@ -68,6 +118,7 @@ function createDataTable(contentW: number): TableElement {
 
   const dataFont = { family: 'SimSun', size: 10, bold: false, italic: false, underline: false, color: '#000000' };
 
+  // Build one data cell per column, each bound to a placeholder field
   const dataCells = colIds.map((_colId, i) => ({
     id: uid(), rowSpan: 1, colSpan: 1,
     content: dataFields[i],
@@ -95,16 +146,32 @@ function createDataTable(contentW: number): TableElement {
   };
 }
 
-/* ─── 采购单模板 ─── */
+/* ─── Purchase Order Template ─── */
 
+/**
+ * Creates a complete Purchase Order (采购订单) report template.
+ *
+ * Layout (A4 portrait, 794×1123):
+ *   - Title band:    report heading, supplier info, order number & date
+ *   - Page header:   column headers for the detail table (repeats on every page)
+ *   - Data band:     detail line items rendered as a table element
+ *   - Group footer:  subtotals row (quantity & amount sums)
+ *   - Report footer: tax, freight, and grand total with tax
+ *   - Page footer:   remarks, signature lines, page numbering
+ *
+ * Includes a sample JSON data source with 8 purchase line items.
+ *
+ * @returns A fully-populated Report object ready for the designer canvas
+ */
 export function createPurchaseOrderTemplate(): Report {
+  // A4 portrait dimensions at 96 DPI
   const pageW = 794;
   const pageH = 1123;
   const marginL = 56;
   const marginR = 56;
   const contentW = pageW - marginL - marginR; // 682
 
-  // ─── 测试数据 ───
+  // ─── Sample data for preview ───
   const testItems = [
     { no: 1, code: 'ITM-001', name: '联想 ThinkPad X1 Carbon 笔记本电脑', spec: 'i7-1365U/16GB/512GB', unit: '台', qty: 10, price: 8999.00, amount: 89990.00 },
     { no: 2, code: 'ITM-002', name: '戴尔 U2723QE 4K显示器', spec: '27寸/4K/IPS', unit: '台', qty: 10, price: 3599.00, amount: 35990.00 },
@@ -132,37 +199,42 @@ export function createPurchaseOrderTemplate(): Report {
   };
 
   const elements: Record<string, ReportElement> = {};
+  /** Adds an element to the shared elements map and returns its ID. */
   const addEl = (el: ReportElement) => { elements[el.id] = el; return el.id; };
+  /** Running z-order index to ensure elements are layered correctly. */
   let zIdx = 1;
 
   // ═══════════════════════════════════════════════════════════════
-  // TITLE BAND — 标题 + 订单信息
+  // TITLE BAND — Report heading + order metadata
   // ═══════════════════════════════════════════════════════════════
   const titleBand: Band = { id: uid(), type: 'title', height: 70, backgroundColor: '#ffffff', visible: true, elements: [] };
+  /** Track how many elements existed before this band so we can slice them out later. */
   const tStart = Object.keys(elements).length;
 
   addEl({ ...txt(0, 2, contentW, 28, '采 购 订 单', { fontSize: 18, bold: true, align: 'center' }), zOrder: zIdx++ });
 
-  // 左侧信息
+  // Left side: supplier info
   addEl({ ...txt(0, 32, 50, 16, '供应商：', { fontSize: 10, bold: true }), zOrder: zIdx++ });
   addEl({ ...txt(50, 32, 280, 16, '广州博远电子科技有限公司'), zOrder: zIdx++ });
   addEl({ ...txt(0, 48, 50, 16, '联系人：', { fontSize: 10, bold: true }), zOrder: zIdx++ });
   addEl({ ...txt(50, 48, 120, 16, '张明远'), zOrder: zIdx++ });
 
-  // 右侧信息
+  // Right side: order number and date
   addEl({ ...txt(contentW - 260, 32, 70, 16, '单    号：', { fontSize: 10, bold: true, align: 'right' }), zOrder: zIdx++ });
   addEl({ ...txt(contentW - 190, 32, 190, 16, 'PO-2026-00518'), zOrder: zIdx++ });
   addEl({ ...txt(contentW - 260, 48, 70, 16, '日    期：', { fontSize: 10, bold: true, align: 'right' }), zOrder: zIdx++ });
   addEl({ ...txt(contentW - 190, 48, 190, 16, '2026-05-25'), zOrder: zIdx++ });
 
+  // Collect element IDs added since tStart and assign them to this band
   titleBand.elements = Object.keys(elements).slice(tStart);
 
   // ═══════════════════════════════════════════════════════════════
-  // PAGE HEADER BAND — 表头行（紧贴数据带，视觉一体）
+  // PAGE HEADER BAND — Table column headers (visually contiguous with data band)
   // ═══════════════════════════════════════════════════════════════
   const pageHeaderBand: Band = { id: uid(), type: 'pageHeader', height: 24, backgroundColor: '#ffffff', visible: true, elements: [], repeatOnEveryPage: true };
   const phStart = Object.keys(elements).length;
 
+  // Column definitions: text, x-offset, and width — must align with data table columns
   const colDefs = [
     { text: '序号', x: 0, w: 40 },
     { text: '物料编码', x: 40, w: 90 },
@@ -175,6 +247,7 @@ export function createPurchaseOrderTemplate(): Report {
   ];
 
   colDefs.forEach((c, i) => {
+    // First column gets a left border; all get top/bottom/right borders
     addEl({ ...txt(c.x, 0, c.w, 24, c.text, {
       fontSize: 10, bold: true, align: 'center',
       borders_top: B,
@@ -187,7 +260,7 @@ export function createPurchaseOrderTemplate(): Report {
   pageHeaderBand.elements = Object.keys(elements).slice(phStart);
 
   // ═══════════════════════════════════════════════════════════════
-  // DATA BAND — 明细数据（仅数据行的 Table 元素）
+  // DATA BAND — Detail line items (table element with data row only)
   // ═══════════════════════════════════════════════════════════════
   const dataBand: Band = { id: uid(), type: 'data', height: 24, backgroundColor: '#ffffff', visible: true, elements: [] };
   const dStart = Object.keys(elements).length;
@@ -199,7 +272,7 @@ export function createPurchaseOrderTemplate(): Report {
   dataBand.elements = Object.keys(elements).slice(dStart);
 
   // ═══════════════════════════════════════════════════════════════
-  // GROUP FOOTER BAND — 合计
+  // GROUP FOOTER BAND — Subtotals row
   // ═══════════════════════════════════════════════════════════════
   const groupFooterBand: Band = { id: uid(), type: 'groupFooter', height: 28, backgroundColor: '#ffffff', visible: true, elements: [] };
   const gfStart = Object.keys(elements).length;
@@ -229,7 +302,7 @@ export function createPurchaseOrderTemplate(): Report {
   groupFooterBand.elements = Object.keys(elements).slice(gfStart);
 
   // ═══════════════════════════════════════════════════════════════
-  // REPORT FOOTER BAND — 价税合计
+  // REPORT FOOTER BAND — Tax, freight, and grand total
   // ═══════════════════════════════════════════════════════════════
   const reportFooterBand: Band = { id: uid(), type: 'reportFooter', height: 56, backgroundColor: '#ffffff', visible: true, elements: [] };
   const rfStart = Object.keys(elements).length;
@@ -246,7 +319,7 @@ export function createPurchaseOrderTemplate(): Report {
   reportFooterBand.elements = Object.keys(elements).slice(rfStart);
 
   // ═══════════════════════════════════════════════════════════════
-  // PAGE FOOTER BAND
+  // PAGE FOOTER BAND — Remarks, signature lines, page numbering
   // ═══════════════════════════════════════════════════════════════
   const pageFooterBand: Band = { id: uid(), type: 'pageFooter', height: 80, backgroundColor: '#ffffff', visible: true, elements: [], repeatOnEveryPage: true };
   const pfStart = Object.keys(elements).length;
@@ -261,11 +334,12 @@ export function createPurchaseOrderTemplate(): Report {
   addEl({ ...txt(230, 50, 220, 16, '供应商签章：__________________', { fontSize: 10 }), zOrder: zIdx++ });
   addEl({ ...txt(460, 50, 220, 16, '审批人：__________________', { fontSize: 10 }), zOrder: zIdx++ });
 
+  // {PageNumber} and {TotalPages} are built-in template variables replaced at render time
   addEl({ ...txt(0, 68, contentW, 12, '— {PageNumber} / {TotalPages} —', { fontSize: 9, align: 'center' }), zOrder: zIdx++ });
 
   pageFooterBand.elements = Object.keys(elements).slice(pfStart);
 
-  // ─── 组装报表 ───
+  // ─── Assemble the final report ───
   const report: Report = {
     id: uid(),
     name: '采购订单',
@@ -286,15 +360,33 @@ export function createPurchaseOrderTemplate(): Report {
   return report;
 }
 
-/* ─── 销售出库单模板（高精度高级分组模板） ─── */
+/* ─── Sales Invoice Template (premium grouped layout) ─── */
 
+/**
+ * Creates a complete Sales Invoice (销售出库发票) report template with a premium
+ * visual design featuring colored headers, barcode, QR code, and formula-based summaries.
+ *
+ * Layout (A4 portrait, 794×1123):
+ *   - Title band:    company name, invoice heading, customer info, barcode
+ *   - Page header:   dark-blue column headers with white text (repeats on every page)
+ *   - Data band:     detail line items rendered as a styled table element
+ *   - Group footer:  page-level subtotals using =Sum() formula expressions
+ *   - Report footer: VAT calculation, grand total, QR verification code
+ *   - Page footer:   shipping instructions, signature lines, page numbering
+ *
+ * Includes a sample JSON data source with 5 sales line items across 2 categories.
+ *
+ * @returns A fully-populated Report object ready for the designer canvas
+ */
 export function createSalesInvoiceTemplate(): Report {
+  // A4 portrait dimensions at 96 DPI
   const pageW = 794;
   const pageH = 1123;
   const marginL = 56;
   const marginR = 56;
   const contentW = pageW - marginL - marginR; // 682
 
+  // Sample sales data with category grouping
   const testSalesItems = [
     { no: 1, category: "数码电子", code: "HW-MATE60", name: "华为 Mate60 Pro 智能手机", spec: "512GB 雅川青", unit: "部", qty: 2, price: 6999.00, amount: 13998.00 },
     { no: 2, category: "数码电子", code: "AP-IPH15", name: "苹果 iPhone 15 Pro Max 手机", spec: "256GB 原色钛金属", unit: "部", qty: 3, price: 9999.00, amount: 29997.00 },
@@ -320,32 +412,37 @@ export function createSalesInvoiceTemplate(): Report {
   };
 
   const elements: Record<string, ReportElement> = {};
+  /** Adds an element to the shared elements map and returns its ID. */
   const addEl = (el: ReportElement) => { elements[el.id] = el; return el.id; };
+  /** Running z-order index to ensure elements are layered correctly. */
   let zIdx = 1;
+  /** Light slate border used throughout the sales invoice template for a softer look. */
   const HB = { style: "solid" as const, width: 1, color: "#cbd5e1" };
 
   // ═══════════════════════════════════════════════════════════════
-  // TITLE BAND
+  // TITLE BAND — Company name, invoice heading, customer info, barcode
   // ═══════════════════════════════════════════════════════════════
   const titleBand: Band = { id: uid(), type: "title", height: 110, backgroundColor: "#ffffff", visible: true, elements: [] };
   const tStart = Object.keys(elements).length;
 
-  // Premium Header Layout
+  // Premium header: company name, invoice title, separator line
   addEl({ ...txt(0, 0, contentW, 32, "深 圳 智 创 技 术 高 科 技 集 团", { fontSize: 11, bold: true, align: "center", color: "#64748b" }), zOrder: zIdx++ });
   addEl({ ...txt(0, 24, contentW, 28, "销 售 出 库 发 票", { fontSize: 20, bold: true, align: "center", color: "#1e3a8a" }), zOrder: zIdx++ });
   addEl({ ...line(0, 56, contentW, 0, "#1e3a8a", 2), zOrder: zIdx++ });
 
-  // Columns Meta
+  // Left column: customer metadata
   addEl({ ...txt(0, 64, 60, 16, "客户名称：", { fontSize: 9, bold: true, color: "#475569" }), zOrder: zIdx++ });
   addEl({ ...txt(60, 64, 250, 16, "北京博华科技股份有限公司", { fontSize: 9 }), zOrder: zIdx++ });
   addEl({ ...txt(0, 80, 60, 16, "发发地址：", { fontSize: 9, bold: true, color: "#475569" }), zOrder: zIdx++ });
   addEl({ ...txt(60, 80, 250, 16, "北京市海淀区中关村南大街科技大厦A座", { fontSize: 9 }), zOrder: zIdx++ });
 
+  // Right column: invoice number and date
   addEl({ ...txt(contentW - 310, 64, 180, 16, "出 库 单 号：", { fontSize: 9, bold: true, align: "right", color: "#475569" }), zOrder: zIdx++ });
   addEl({ ...txt(contentW - 130, 64, 130, 16, "INV-2026-00940", { fontSize: 9, bold: true, color: "#0f172a" }), zOrder: zIdx++ });
   addEl({ ...txt(contentW - 310, 80, 180, 16, "出 库 日 期：", { fontSize: 9, bold: true, align: "right", color: "#475569" }), zOrder: zIdx++ });
   addEl({ ...txt(contentW - 130, 80, 130, 16, "2026-05-27", { fontSize: 9, color: "#0f172a" }), zOrder: zIdx++ });
 
+  // Barcode element for the invoice number (CODE128 format)
   addEl({
     id: uid(), type: "barcode", x: contentW - 130, y: 10, width: 130, height: 40,
     rotation: 0, locked: false, visible: true, name: "单号条码", zOrder: zIdx++,
@@ -355,11 +452,12 @@ export function createSalesInvoiceTemplate(): Report {
   titleBand.elements = Object.keys(elements).slice(tStart);
 
   // ═══════════════════════════════════════════════════════════════
-  // PAGE HEADER BAND
+  // PAGE HEADER BAND — Dark-blue column headers with white text
   // ═══════════════════════════════════════════════════════════════
   const pageHeaderBand: Band = { id: uid(), type: "pageHeader", height: 26, backgroundColor: "#ffffff", visible: true, elements: [], repeatOnEveryPage: true };
   const phStart = Object.keys(elements).length;
 
+  // Column definitions: text, x-offset, and width — must align with sales invoice table columns
   const colDefs = [
     { text: "序号", x: 0, w: 40 },
     { text: "商品编码", x: 40, w: 80 },
@@ -372,6 +470,7 @@ export function createSalesInvoiceTemplate(): Report {
   ];
 
   colDefs.forEach((c, i) => {
+    // Header cells: white text on dark-blue background; first column gets left border
     addEl({ ...txt(c.x, 0, c.w, 26, c.text, {
       fontSize: 10, bold: true, align: "center", color: "#ffffff",
       borders_top: HB,
@@ -384,7 +483,7 @@ export function createSalesInvoiceTemplate(): Report {
   pageHeaderBand.elements = Object.keys(elements).slice(phStart);
 
   // ═══════════════════════════════════════════════════════════════
-  // DATA BAND
+  // DATA BAND — Detail line items (table element)
   // ═══════════════════════════════════════════════════════════════
   const dataBand: Band = { id: uid(), type: "data", height: 24, backgroundColor: "#ffffff", visible: true, elements: [] };
   const dStart = Object.keys(elements).length;
@@ -396,13 +495,14 @@ export function createSalesInvoiceTemplate(): Report {
   dataBand.elements = Object.keys(elements).slice(dStart);
 
   // ═══════════════════════════════════════════════════════════════
-  // GROUP FOOTER BAND
+  // GROUP FOOTER BAND — Page-level subtotals with formula expressions
   // ═══════════════════════════════════════════════════════════════
   const groupFooterBand: Band = { id: uid(), type: "groupFooter", height: 28, backgroundColor: "#ffffff", visible: true, elements: [] };
   const gfStart = Object.keys(elements).length;
 
   addEl({ ...txt(0, 0, 420, 24, "", { borders_top: HB, borders_bottom: HB, borders_left: HB, borders_right: HB }), zOrder: zIdx++ });
   addEl({ ...txt(420, 0, 40, 24, "本页合计", { fontSize: 9, bold: true, align: "center", borders_top: HB, borders_bottom: HB, borders_left: N, borders_right: HB }), zOrder: zIdx++ });
+  // =Sum() formula expressions will be evaluated at render time by the report engine
   addEl({ ...txt(460, 0, 50, 24, "=Sum(\"qty\")", { bold: true, align: "right", borders_top: HB, borders_bottom: HB, borders_left: N, borders_right: HB }), zOrder: zIdx++ });
   addEl({ ...txt(510, 0, 80, 24, "", { borders_top: HB, borders_bottom: HB, borders_left: N, borders_right: HB }), zOrder: zIdx++ });
   addEl({ ...txt(590, 0, 92, 24, "=Sum(\"amount\")", { bold: true, align: "right", borders_top: HB, borders_bottom: HB, borders_left: N, borders_right: HB }), zOrder: zIdx++ });
@@ -410,14 +510,14 @@ export function createSalesInvoiceTemplate(): Report {
   groupFooterBand.elements = Object.keys(elements).slice(gfStart);
 
   // ═══════════════════════════════════════════════════════════════
-  // REPORT FOOTER BAND
+  // REPORT FOOTER BAND — Tax calculation, grand total, QR verification
   // ═══════════════════════════════════════════════════════════════
   const reportFooterBand: Band = { id: uid(), type: "reportFooter", height: 90, backgroundColor: "#ffffff", visible: true, elements: [] };
   const rfStart = Object.keys(elements).length;
 
   addEl({ ...line(0, 4, contentW, 0, "#1e3a8a", 1.5), zOrder: zIdx++ });
 
-  // Tax calculations
+  // Tax and total lines use formula expressions evaluated at render time
   addEl({ ...txt(0, 12, 450, 16, "销售开票计算增值税额(13%)：", { align: "right", fontSize: 9, color: "#475569" }), zOrder: zIdx++ });
   addEl({ ...txt(450, 12, 130, 16, "=Sum(\"amount\") * 0.13", { align: "right", bold: true, fontSize: 9, color: "#1e293b" }), zOrder: zIdx++ });
 
@@ -429,7 +529,7 @@ export function createSalesInvoiceTemplate(): Report {
   addEl({ ...txt(0, 52, 450, 20, "价税统一总合计金额(大写人民币)：", { bold: true, align: "right", fontSize: 11, color: "#0f172a" }), zOrder: zIdx++ });
   addEl({ ...txt(450, 52, 130, 20, "¥60,883.00", { bold: true, align: "right", fontSize: 12, color: "#b91c1c" }), zOrder: zIdx++ });
 
-  // QRCode verification
+  // QR code for digital signature verification
   addEl({
     id: uid(), type: "qrcode", x: 10, y: 10, width: 70, height: 70,
     rotation: 0, locked: false, visible: true, name: "真伪验证码", zOrder: zIdx++,
@@ -441,7 +541,7 @@ export function createSalesInvoiceTemplate(): Report {
   reportFooterBand.elements = Object.keys(elements).slice(rfStart);
 
   // ═══════════════════════════════════════════════════════════════
-  // PAGE FOOTER BAND
+  // PAGE FOOTER BAND — Shipping instructions, signature lines, page numbering
   // ═══════════════════════════════════════════════════════════════
   const pageFooterBand: Band = { id: uid(), type: "pageFooter", height: 75, backgroundColor: "#ffffff", visible: true, elements: [], repeatOnEveryPage: true };
   const pfStart = Object.keys(elements).length;
@@ -456,11 +556,12 @@ export function createSalesInvoiceTemplate(): Report {
   addEl({ ...txt(230, 46, 220, 16, "收货复核人：__________________", { fontSize: 9.5 }), zOrder: zIdx++ });
   addEl({ ...txt(460, 46, 220, 16, "承运司机：__________________", { fontSize: 9.5 }), zOrder: zIdx++ });
 
+  // {PageNumber} and {TotalPages} are built-in template variables replaced at render time
   addEl({ ...txt(0, 62, contentW, 12, "— 第 {PageNumber} 页 / 共 {TotalPages} 页 —", { fontSize: 9, align: "center", color: "#475569" }), zOrder: zIdx++ });
 
   pageFooterBand.elements = Object.keys(elements).slice(pfStart);
 
-  // Assemble sales invoice
+  // ─── Assemble the final report ───
   const report: Report = {
     id: uid(),
     name: "销售出库发票",
@@ -481,15 +582,31 @@ export function createSalesInvoiceTemplate(): Report {
   return report;
 }
 
-// Separate helper for sales invoice table rendering
+/**
+ * Creates a data-only table for the Sales Invoice data band.
+ *
+ * The table has 8 columns matching the sales detail layout:
+ *   序号 | 商品编码 | 商品名称 | 规格描述 | 单位 | 数量 | 单价 | 小计金额
+ *
+ * Uses softer slate-colored borders and a smaller font (9.5pt) compared to the
+ * Purchase Order table. Numeric columns (price, amount) use "#,##0.00" format masking,
+ * and word-wrap + auto-grow are enabled for the detail cells.
+ *
+ * @param contentW - Full content width of the page
+ * @returns A TableElement containing a single data row with placeholder fields
+ */
 function createSalesInvoiceTable(contentW: number): TableElement {
+  // Column widths must match the header column definitions in the page header band
   const colWidths = [40, 80, 180, 120, 40, 50, 80, 92];
   const colIds = colWidths.map(() => uid());
   const dataRowId = uid();
 
+  // Placeholder tokens — will be replaced by actual data fields at render time
   const dataFields = ["{no}", "{code}", "{name}", "{spec}", "{unit}", "{qty}", "{price}", "{amount}"];
+  // Alignment per column: name/spec left-aligned, numbers right-aligned, rest centered
   const dataAligns: ("left" | "center" | "right")[] = ["center", "center", "left", "left", "center", "right", "right", "right"];
 
+  // Light slate borders for a softer visual style
   const cellBorder = {
     top: { style: "solid" as const, width: 1, color: "#cbd5e1" },
     bottom: { style: "solid" as const, width: 1, color: "#cbd5e1" },
@@ -499,6 +616,7 @@ function createSalesInvoiceTable(contentW: number): TableElement {
 
   const dataFont = { family: "SimSun", size: 9.5, bold: false, italic: false, underline: false, color: "#1e293b" };
 
+  // Build one data cell per column; price/amount columns use numeric format mask
   const dataCells = colIds.map((_colId, i) => ({
     id: uid(), rowSpan: 1, colSpan: 1,
     content: dataFields[i],

@@ -1,3 +1,18 @@
+/**
+ * @file useDragEngine.ts
+ * Custom React hook that implements the drag/resize/snap interaction engine
+ * for the Report Designer canvas.
+ *
+ * Handles five interaction modes:
+ * - **dragging**: Move selected elements within and across bands
+ * - **resizing**: Resize an element via its 8 corner/edge handles
+ * - **creating**: Place a new element by clicking and dragging on the canvas
+ * - **rubber-band**: Multi-select elements by dragging a selection rectangle
+ * - **band-resizing**: Resize a band's height by dragging its bottom edge
+ *
+ * Integrates with the Zustand designer store for state persistence and
+ * provides snap-to-grid and smart snap-guide computation.
+ */
 import { useRef, useCallback, useEffect } from "react";
 import { useDesignerStore } from "../store/designerStore";
 import {
@@ -6,6 +21,7 @@ import {
   createElement,
 } from "../utils/elementFactory";
 
+/** Interaction modes for the drag engine state machine */
 type DragMode =
   | "idle"
   | "dragging"
@@ -14,6 +30,7 @@ type DragMode =
   | "rubber-band"
   | "band-resizing";
 
+/** Internal state for the drag engine, tracking mode-specific data */
 interface DragState {
   mode: DragMode;
   startClientX: number;
@@ -43,10 +60,27 @@ interface DragState {
   historyPushed: boolean;
 }
 
+/** Minimum width/height for an element when resizing (prevents collapsing to zero). */
 const MIN_SIZE = 20;
+/** Pixel distance within which an element edge snaps to a nearby guide or sibling edge. */
 const SNAP_THRESHOLD = 5;
 
+/**
+ * Custom hook providing the drag/resize/create interaction engine for the report canvas.
+ *
+ * All interaction state is held in a mutable ref (stateRef) to avoid re-renders
+ * during drag. Store updates are batched per animation frame via requestAnimationFrame.
+ *
+ * @returns An object containing:
+ *  - containerRef:    ref to attach to the scrollable canvas container
+ *  - handleElementDragStart:  begin dragging one or more elements
+ *  - handleResizeStart:       begin resizing an element via a handle
+ *  - handleBandMouseDown:     begin creating an element or rubber-band selection on a band
+ *  - handleBandResizeStart:   begin resizing a band's height
+ *  - dragState:               the mutable DragState ref (for reading mode/position in components)
+ */
 export function useDragEngine() {
+  /** Mutable state tracking the current drag interaction (mode, positions, flags). */
   const stateRef = useRef<DragState>({
     mode: "idle",
     startClientX: 0,
@@ -71,15 +105,27 @@ export function useDragEngine() {
     historyPushed: false,
   });
 
+  /** requestAnimationFrame ID used to throttle mousemove updates to once per frame. */
   const rafIdRef = useRef(0);
+  /** Ref to the scrollable canvas container element (currently unused but available for future use). */
   const containerRef = useRef<HTMLDivElement | null>(null);
 
+  /** Direct accessor for the Zustand store (avoids re-renders from useStore). */
   const getStore = () => useDesignerStore.getState();
 
   /**
-   * Convert client (screen) coordinates to canvas (unzoomed band-relative) coordinates.
-   * Uses the canvas-content element's bounding rect and subtracts the band's Y offset
-   * to get band-relative coordinates.
+   * Convert client (screen) coordinates to canvas (unzoomed, band-relative) coordinates.
+   *
+   * Steps:
+   * 1. Subtract the canvas-content element's bounding rect and divide by zoom
+   *    to get unzoomed canvas coordinates.
+   * 2. If a band element is provided, compute that band's cumulative Y offset
+   *    and subtract it to get band-relative Y coordinates.
+   *
+   * @param clientX - Screen X coordinate from the mouse event.
+   * @param clientY - Screen Y coordinate from the mouse event.
+   * @param bandEl  - Optional band DOM element (used to compute band-relative Y).
+   * @returns An { x, y } object in unzoomed canvas (or band-relative) coordinates.
    */
   const clientToCanvas = useCallback(
     (clientX: number, clientY: number, bandEl?: HTMLElement) => {
@@ -113,7 +159,14 @@ export function useDragEngine() {
     [],
   );
 
-  /** Get sibling elements in the same band (excluding the given ids) */
+  /**
+   * Get all sibling elements in the same band, excluding the given IDs.
+   * Used to compute snap-guide candidates — we don't snap an element to itself.
+   *
+   * @param bandId     - The band whose elements to return.
+   * @param excludeIds - Element IDs to exclude (typically the dragged/resized ones).
+   * @returns An array of ReportElement objects.
+   */
   const getSiblingElements = useCallback(
     (bandId: string, excludeIds: string[]) => {
       const store = getStore();
@@ -127,6 +180,21 @@ export function useDragEngine() {
     [],
   );
 
+  // ─── Drag Start Handlers ───────────────────────────────────────────────
+
+  /**
+   * Begin dragging one or more elements.
+   *
+   * Handles selection logic: if the element was not already selected, it becomes
+   * the sole selection (or joins the selection with Ctrl/Meta). If already selected,
+   * all selected elements drag together.
+   *
+   * Undo history is deferred until the first actual movement (to avoid empty history
+   * entries from clicks that don't result in a drag).
+   *
+   * @param elementId - The ID of the element that received the mousedown.
+   * @param e         - The originating React mouse event.
+   */
   const handleElementDragStart = useCallback(
     (elementId: string, e: React.MouseEvent) => {
       e.stopPropagation();
@@ -140,8 +208,8 @@ export function useDragEngine() {
         store.selectElement(elementId, e.ctrlKey || e.metaKey);
       }
 
-      const ids =
-        e.ctrlKey || e.metaKey
+      // Determine which IDs to drag: all selected if Ctrl/Meta or already-selected, else just this one
+      const ids =        e.ctrlKey || e.metaKey
           ? store.selectedElementIds
           : isAlreadySelected
             ? store.selectedElementIds
@@ -180,6 +248,14 @@ export function useDragEngine() {
     [],
   );
 
+  /**
+   * Begin resizing an element via one of its 8 handles (n, s, e, w, ne, nw, se, sw).
+   * Pushes undo history immediately since any resize is significant.
+   *
+   * @param elementId - The element being resized.
+   * @param handle    - A compass-direction string indicating which handle was grabbed (e.g. "ne", "sw").
+   * @param e         - The originating React mouse event.
+   */
   const handleResizeStart = useCallback(
     (elementId: string, handle: string, e: React.MouseEvent) => {
       e.stopPropagation();
@@ -221,6 +297,13 @@ export function useDragEngine() {
     [],
   );
 
+  /**
+   * Begin resizing a band's height by dragging its bottom edge.
+   * The band's starting height is stored in elementStartBounds.h (reusing the struct).
+   *
+   * @param bandId - The band being resized.
+   * @param e      - The originating React mouse event.
+   */
   const handleBandResizeStart = useCallback(
     (bandId: string, e: React.MouseEvent) => {
       const store = getStore();
@@ -245,6 +328,19 @@ export function useDragEngine() {
     [],
   );
 
+  /**
+   * Handle mousedown on a band surface. Dispatches to one of two modes:
+   *
+   * - If a creation tool is active (not "select" / "pan"), enters "creating" mode
+   *   so the user can draw a new element by dragging.
+   * - If the "select" tool is active, enters "rubber-band" mode for marquee selection.
+   *
+   * Uses element.closest("[data-band-id]") instead of e.currentTarget because
+   * React 18+ may recycle event targets.
+   *
+   * @param bandId - The band that was clicked.
+   * @param e      - The originating React mouse event.
+   */
   const handleBandMouseDown = useCallback(
     (bandId: string, e: React.MouseEvent) => {
       const store = getStore();
@@ -298,11 +394,17 @@ export function useDragEngine() {
     [clientToCanvas],
   );
 
+  // ─── Global Mouse Move / Up Effect ─────────────────────────────────────
+  // Registers window-level mousemove and mouseup listeners so drags continue
+  // even when the cursor leaves the canvas element. Uses requestAnimationFrame
+  // throttling to avoid overwhelming the store with per-pixel updates.
+
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
       const s = stateRef.current;
       if (s.mode === "idle") return;
 
+      // Throttle: only one update per animation frame
       if (rafIdRef.current) return;
       rafIdRef.current = requestAnimationFrame(() => {
         rafIdRef.current = 0;
@@ -315,6 +417,8 @@ export function useDragEngine() {
           const dx = (e.clientX - st.startClientX) / zoom;
           const dy = (e.clientY - st.startClientY) / zoom;
 
+          // Dead-zone check: only start a real drag after moving >2px to avoid
+          // accidental drags from simple clicks
           if (!st.moved && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) {
             st.moved = true;
             if (!st.historyPushed) {
@@ -360,7 +464,9 @@ export function useDragEngine() {
               }
             }
 
-            // Compute snap guides against sibling elements + canvas edges
+            // Compute snap guides against sibling elements + canvas edges.
+            // Uses the first (primary) element as the snap reference; all other
+            // dragged elements follow the same offset.
             const siblings = getSiblingElements(
               st.currentBandId,
               st.dragElementIds,
@@ -442,7 +548,7 @@ export function useDragEngine() {
           }
         }
 
-        // ─── Resizing mode: element-to-element snap ───
+        // ─── Resizing mode: compute new bounds from handle direction ───
         if (st.mode === "resizing") {
           const dx = (e.clientX - st.startClientX) / zoom;
           const dy = (e.clientY - st.startClientY) / zoom;
@@ -454,6 +560,9 @@ export function useDragEngine() {
             newW = b.w,
             newH = b.h;
 
+          // Compute new position/size based on which handle is being dragged.
+          // Handle direction is encoded as compass letters: n/s/e/w.
+          // "e" = east (right edge), "w" = west (left edge), etc.
           if (h.includes("e")) newW = Math.max(MIN_SIZE, b.w + dx);
           if (h.includes("w")) {
             newW = Math.max(MIN_SIZE, b.w - dx);
@@ -485,7 +594,10 @@ export function useDragEngine() {
                 }
               : undefined;
 
-            // Snap the position (x, y) using element-to-element alignment
+            // Snap the position (x, y) using element-to-element alignment.
+            // For west/north handles, the position snaps and width/height adjust
+            // to keep the opposite edge fixed. For east/south handles, only
+            // width/height change; the anchor edge stays put.
             const snapResult = computeSnapGuides(
               { x: newX, y: newY, width: newW, height: newH },
               siblings,
@@ -582,6 +694,7 @@ export function useDragEngine() {
           store.setSnapGuides(guides);
         }
 
+        // ─── Creating mode: track current cursor position for element draw-preview ───
         if (st.mode === "creating") {
           const bandEl = document.querySelector(
             `[data-band-id="${st.createBandId}"]`,
@@ -594,6 +707,7 @@ export function useDragEngine() {
           }
         }
 
+        // ─── Rubber-band mode: update the end point of the selection rectangle ───
         if (st.mode === "rubber-band") {
           const bandEl = document.querySelector(
             `[data-band-id="${st.rubberBandBandId}"]`,
@@ -606,6 +720,7 @@ export function useDragEngine() {
           }
         }
 
+        // ─── Band-resizing mode: adjust the band height based on vertical drag ───
         if (st.mode === "band-resizing") {
           const dy = (e.clientY - st.startClientY) / zoom;
           const startHeight = st.elementStartBounds.h;
@@ -619,6 +734,7 @@ export function useDragEngine() {
       });
     };
 
+    // ─── Mouse Up: finalize the interaction ──────────────────────────────
     const onMouseUp = (_e: MouseEvent) => {
       const s = stateRef.current;
       if (s.mode === "idle") return;
@@ -645,7 +761,9 @@ export function useDragEngine() {
         store.recalcBandHeights();
       }
 
+      // ─── Creating: finalize the new element ────────────────────────────
       if (s.mode === "creating" && s.moved) {
+        // User dragged to define a size — normalize the rectangle and snap
         const { activeTool } = store;
         let x = Math.min(s.createStartX, s.currentX);
         let y = Math.min(s.createStartY, s.currentY);
@@ -657,6 +775,7 @@ export function useDragEngine() {
           w = snapToGrid(w, store.gridSize);
           h = snapToGrid(h, store.gridSize);
         }
+        // If the user barely dragged (<10px), use default dimensions instead
         if (w < 10) w = 150;
         if (h < 10) h = 30;
 
@@ -666,6 +785,7 @@ export function useDragEngine() {
         store.addElement(el, s.createBandId);
         store.setActiveTool("select");
       } else if (s.mode === "creating" && !s.moved) {
+        // Simple click (no drag) — create element at click position with default size
         const { activeTool } = store;
         const el = createElement(
           activeTool as any,
@@ -676,6 +796,7 @@ export function useDragEngine() {
         store.setActiveTool("select");
       }
 
+      // ─── Rubber-band: finalize the marquee selection ───────────────────
       if (
         s.mode === "rubber-band" &&
         s.moved &&
@@ -693,6 +814,7 @@ export function useDragEngine() {
         store.clearSelection();
       }
 
+      // ─── Reset all interaction state ──────────────────────────────────
       store.setIsDragging(false);
       store.setIsResizing(false);
       store.setSnapGuides([]);
@@ -716,6 +838,7 @@ export function useDragEngine() {
     };
   }, [clientToCanvas, getSiblingElements]);
 
+  // ─── Return the hook's public API ──────────────────────────────────────
   return {
     containerRef,
     handleElementDragStart,

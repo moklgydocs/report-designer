@@ -1,27 +1,52 @@
+/**
+ * @file OptionsBar.tsx
+ * Context-sensitive toolbar displayed below the main menu bar.
+ *
+ * Provides quick-access controls grouped into sections:
+ * - Operations: undo/redo
+ * - View: zoom in/out, grid toggle, snap toggle
+ * - Edit: copy/paste/delete/duplicate (shown when elements are selected)
+ * - Alignment: distribute/align (shown during multi-selection)
+ * - Z-Order: bring to front / send to back (shown when elements are selected)
+ * - Type-specific options: font, color, chart type, barcode format, etc.
+ */
 import React, { useMemo } from 'react';
 import { useDesignerStore } from '../../store/designerStore';
 import type { ReportElement, ElementType, CrossTabElement, TextElement, BarcodeElement, QRCodeElement, ChartElement, TableElement, LineElement, RectangleElement, ImageElement } from '../../types';
 import './OptionsBar.css';
 
+/** Chinese display labels for each element type */
 const ELEMENT_LABELS: Record<ElementType, string> = {
   text: '文本', rectangle: '矩形', line: '线条', image: '图片',
   barcode: '条形码', qrcode: '二维码', chart: '图表',
   table: '表格', subreport: '子报表', crosstab: '交叉表',
 };
 
+/**
+ * OptionsBar component — the horizontal toolbar above the canvas.
+ *
+ * Dynamically shows/hides sections based on current selection state.
+ * When a single element is selected, its type-specific options appear.
+ *
+ * @returns The options bar JSX
+ */
 export const OptionsBar: React.FC = () => {
   const { selectedElementIds, report, zoom, setZoom, undo, redo,
     snapEnabled, setSnapEnabled, showGrid, setShowGrid,
     copySelected, pasteElements, deleteElement, duplicateElement,
     alignElements, bringToFront, sendToBack } = useDesignerStore();
 
+  /** The currently selected element when exactly one is selected; null otherwise */
   const selectedElement = useMemo<ReportElement | null>(() => {
     if (selectedElementIds.length !== 1) return null;
     return report.elements[selectedElementIds[0]] ?? null;
   }, [selectedElementIds, report.elements]);
 
+  /** Whether multiple elements are currently selected */
   const multiSelect = selectedElementIds.length > 1;
+  /** Whether at least one element is currently selected */
   const hasSelection = selectedElementIds.length > 0;
+  /** Shorthand reference to the single selected element (or null) */
   const el = selectedElement;
 
   return (
@@ -153,9 +178,17 @@ export const OptionsBar: React.FC = () => {
 };
 
 /* ─── CrossTab ─── */
+
+/**
+ * Context options for CrossTab elements.
+ * Allows selecting row, column, and value fields from available data sources,
+ * plus the aggregation function (sum, count, avg, min, max).
+ */
 const CrossTabOptions: React.FC<{ element: CrossTabElement }> = ({ element }) => {
   const { updateElement, report } = useDesignerStore();
+  /** Flatten all data source field names for the dropdowns */
   const dsFields = report.dataSources.flatMap(ds => ds.fields.map(f => f.name));
+  /** Show a placeholder if no data sources are configured yet */
   const fieldOptions = dsFields.length > 0 ? dsFields : ['(请先添加数据源)'];
 
   return (
@@ -188,8 +221,15 @@ const CrossTabOptions: React.FC<{ element: CrossTabElement }> = ({ element }) =>
 };
 
 /* ─── Text ─── */
+
+/**
+ * Context options for Text elements.
+ * Provides font family, size, bold/italic/underline toggles, text color,
+ * and horizontal alignment (left/center/right).
+ */
 const TextOptions: React.FC<{ element: TextElement }> = ({ element }) => {
   const { updateElement } = useDesignerStore();
+  /** Helper to partially update the text element */
   const upd = (patch: Partial<TextElement>) => updateElement(element.id, patch);
 
   return (
@@ -223,6 +263,8 @@ const TextOptions: React.FC<{ element: TextElement }> = ({ element }) => {
 };
 
 /* ─── Barcode ─── */
+
+/** Context options for Barcode elements: format selection (CODE128/EAN13/CODE39), value input, show-text toggle */
 const BarcodeOptions: React.FC<{ element: BarcodeElement }> = ({ element }) => {
   const { updateElement } = useDesignerStore();
   const upd = (patch: Partial<BarcodeElement>) => updateElement(element.id, patch);
@@ -242,6 +284,8 @@ const BarcodeOptions: React.FC<{ element: BarcodeElement }> = ({ element }) => {
 };
 
 /* ─── QR Code ─── */
+
+/** Context options for QRCode elements: error correction level (L/M/Q/H) and value input */
 const QRCodeOptions: React.FC<{ element: QRCodeElement }> = ({ element }) => {
   const { updateElement } = useDesignerStore();
   const upd = (patch: Partial<QRCodeElement>) => updateElement(element.id, patch);
@@ -261,6 +305,8 @@ const QRCodeOptions: React.FC<{ element: QRCodeElement }> = ({ element }) => {
 };
 
 /* ─── Chart ─── */
+
+/** Context options for Chart elements: chart type (bar/line/pie/area), title, and background color */
 const ChartOptions: React.FC<{ element: ChartElement }> = ({ element }) => {
   const { updateElement } = useDesignerStore();
   const upd = (patch: Partial<ChartElement>) => updateElement(element.id, patch);
@@ -282,6 +328,12 @@ const ChartOptions: React.FC<{ element: ChartElement }> = ({ element }) => {
 };
 
 /* ─── Table ─── */
+
+/**
+ * Context options for Table elements.
+ * Allows adjusting column/row counts (with auto-creation of new columns/rows)
+ * and toggling the repeat-header option.
+ */
 const TableOptions: React.FC<{ element: TableElement }> = ({ element }) => {
   const { updateElement } = useDesignerStore();
   const upd = (patch: Partial<TableElement>) => updateElement(element.id, patch);
@@ -313,6 +365,8 @@ const TableOptions: React.FC<{ element: TableElement }> = ({ element }) => {
 };
 
 /* ─── Line ─── */
+
+/** Context options for Line elements: direction, line width, color, and style (solid/dashed/dotted) */
 const LineOptions: React.FC<{ element: LineElement }> = ({ element }) => {
   const { updateElement } = useDesignerStore();
   const upd = (patch: Partial<LineElement>) => updateElement(element.id, patch);
@@ -339,6 +393,8 @@ const LineOptions: React.FC<{ element: LineElement }> = ({ element }) => {
 };
 
 /* ─── Rectangle ─── */
+
+/** Context options for Rectangle elements: fill color, border color, border width, and border radius */
 const RectangleOptions: React.FC<{ element: RectangleElement }> = ({ element }) => {
   const { updateElement } = useDesignerStore();
   const upd = (patch: Partial<RectangleElement>) => updateElement(element.id, patch);
@@ -357,6 +413,8 @@ const RectangleOptions: React.FC<{ element: RectangleElement }> = ({ element }) 
 };
 
 /* ─── Image ─── */
+
+/** Context options for Image elements: object-fit mode (contain/cover/fill) */
 const ImageOptions: React.FC<{ element: ImageElement }> = ({ element }) => {
   const { updateElement } = useDesignerStore();
   const upd = (patch: Partial<ImageElement>) => updateElement(element.id, patch);
@@ -373,6 +431,8 @@ const ImageOptions: React.FC<{ element: ImageElement }> = ({ element }) => {
 };
 
 /* ─── Subreport ─── */
+
+/** Placeholder options for Subreport elements — directs user to the Property panel for configuration */
 const SubreportOptions: React.FC = () => {
   return <span className="options-hint">子报表参数请在属性面板中配置</span>;
 };

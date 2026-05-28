@@ -8,10 +8,16 @@ import type {
 import type { RenderedPage } from "./reportRenderer";
 import { evaluateExpression } from "./elementFactory";
 
+// ─── Main PDF Generation ────────────────────────────────────────
+
 /**
  * High-Accuracy 600DPI Vector PDF Export Engine.
  * Programmatically translates report elements into high-resolution native PDF geometry,
  * providing crystal-clear printing outputs, selectable text, and minimized file sizes.
+ *
+ * @param report - The report definition (page settings, data sources, etc.)
+ * @param pages  - Pre-rendered paginated bands produced by the report renderer
+ * @returns A jsPDF instance ready for saving or further manipulation
  */
 export async function generateVectorReportPDF(
   report: Report,
@@ -21,10 +27,12 @@ export async function generateVectorReportPDF(
   const QRCode = (await import("qrcode")).default;
   const JsBarcode = (await import("jsbarcode")).default;
 
+  // Derive page layout dimensions from report settings
   const { width, height, marginTop, marginLeft, marginRight } =
     report.pageSettings;
-  const contentWidth = width - marginLeft - marginRight;
+  const contentWidth = width - marginLeft - marginRight; // Horizontal space available for content
 
+  // Create the PDF document with the report's orientation and page size
   const pdf = new jsPDF({
     orientation:
       report.pageSettings.orientation === "landscape"
@@ -34,13 +42,14 @@ export async function generateVectorReportPDF(
     format: [width, height],
   });
 
+  // Iterate through each page
   for (let pageIdx = 0; pageIdx < pages.length; pageIdx++) {
     if (pageIdx > 0) {
       pdf.addPage();
     }
 
     const page = pages[pageIdx];
-    let currentY = marginTop;
+    let currentY = marginTop; // Tracks the Y cursor as bands are laid out top-to-bottom
 
     for (const rb of page.bands) {
       // Draw Band background (if visible and colored)
@@ -49,21 +58,24 @@ export async function generateVectorReportPDF(
         pdf.rect(marginLeft, currentY, contentWidth, rb.height, "F");
       }
 
-      // Filter and sort elements by zOrder
+      // Filter elements by printOn condition and sort by z-order for correct layering
       const filteredElements = rb.elements.filter((el: any) => {
         if (!el.printOn || el.printOn.length === 0) return true;
         return el.printOn.includes(rb.bandType as any);
       });
       const sortedElements = [...filteredElements].sort(
-        (a, b) => a.zOrder - b.zOrder,
+        (a, b) => a.zOrder - b.zOrder, // Lower z-order drawn first (behind)
       );
 
       for (const el of sortedElements) {
+        // Compute absolute position on the page by combining band offset with element offset
         const elX = marginLeft + el.x;
         const elY = currentY + el.y;
 
+        // ── Rectangle Element ──
         if (el.type === "rectangle") {
           const rect = el as any;
+          // Fill + border ("FD"), fill only ("F"), or border only ("D")
           if (rect.fillColor && rect.fillColor !== "transparent") {
             pdf.setFillColor(rect.fillColor);
             if (
@@ -73,9 +85,9 @@ export async function generateVectorReportPDF(
             ) {
               pdf.setDrawColor(rect.borderColor);
               pdf.setLineWidth(rect.borderWidth);
-              pdf.rect(elX, elY, el.width, el.height, "FD");
+              pdf.rect(elX, elY, el.width, el.height, "FD"); // Fill + Draw
             } else {
-              pdf.rect(elX, elY, el.width, el.height, "F");
+              pdf.rect(elX, elY, el.width, el.height, "F"); // Fill only
             }
           } else if (
             rect.borderColor &&
@@ -84,12 +96,14 @@ export async function generateVectorReportPDF(
           ) {
             pdf.setDrawColor(rect.borderColor);
             pdf.setLineWidth(rect.borderWidth);
-            pdf.rect(elX, elY, el.width, el.height, "D");
+            pdf.rect(elX, elY, el.width, el.height, "D"); // Draw (border) only
           }
+        // ── Line Element ──
         } else if (el.type === "line") {
           const line = el as any;
           pdf.setDrawColor(line.color || "#000000");
           pdf.setLineWidth(line.lineWidth || 1);
+          // Draw line based on direction — horizontal, vertical, or diagonal
           if (line.direction === "horizontal") {
             pdf.line(
               elX,
@@ -107,8 +121,10 @@ export async function generateVectorReportPDF(
           } else {
             pdf.line(elX, elY, elX + el.width, elY + el.height);
           }
+        // ── Text Element ──
         } else if (el.type === "text") {
           const txt = el as TextElement;
+          // Evaluate the text content: tries expression → content → dataField in order
           const rawVal = evaluateExpression(
             txt.content || txt.expression || txt.dataField || "",
             rb.dataRow,
@@ -127,6 +143,7 @@ export async function generateVectorReportPDF(
           const size = txt.font?.size || 12;
           pdf.setFontSize(size);
 
+          // Resolve font style from bold/italic flags
           let style = "normal";
           if (txt.font?.bold && txt.font?.italic) style = "bolditalic";
           else if (txt.font?.bold) style = "bold";
@@ -140,7 +157,7 @@ export async function generateVectorReportPDF(
 
           let textX = elX + padL;
 
-          // Horizontal Alignment
+          // Compute horizontal text alignment position
           if (txt.horizontalAlign === "center") {
             textX = elX + el.width / 2;
             pdf.setFont("helvetica", style);
@@ -148,7 +165,7 @@ export async function generateVectorReportPDF(
             textX = elX + el.width - padR;
           }
 
-          // Vertical Alignment (approximate middle using line-height baseline offset)
+          // Vertical alignment: approximate middle using a baseline offset of fontSize/3
           const textY = elY + el.height / 2 + size / 3;
 
           pdf.text(displayVal, textX, textY, {
@@ -160,6 +177,7 @@ export async function generateVectorReportPDF(
                   : "left",
             maxWidth: el.width - padL - padR,
           });
+        // ── Table Element ──
         } else if (el.type === "table") {
           const table = el as TableElement;
           const { tableData } = table;
@@ -172,12 +190,12 @@ export async function generateVectorReportPDF(
             for (let ci = 0; ci < tableData.columns.length; ci++) {
               const cell = tableData.cells[ri]?.[ci];
               if (!cell || cell.rowSpan <= 0 || cell.colSpan <= 0) {
-                // If this is a sub-cell (skip it, but increment X coordinate appropriately)
+                // Skip merged/sub cells — just advance the X cursor by the column width
                 tableX += tableData.columns[ci]?.width || 120;
                 continue;
               }
 
-              // Compute cell combined dimensions of cell and any spans
+              // Compute combined cell dimensions accounting for colSpan and rowSpan
               let cellWidth = 0;
               for (let c = 0; c < cell.colSpan; c++) {
                 cellWidth += tableData.columns[ci + c]?.width || 120;
@@ -200,7 +218,7 @@ export async function generateVectorReportPDF(
               pdf.setLineWidth(1);
               pdf.rect(tableX, tableY, cellWidth, cellHeight, "D");
 
-              // Draw diagonallines if requested
+              // Draw diagonal line across cell if requested (e.g. for split-header cells)
               if (cell.diagonalLine) {
                 pdf.setDrawColor("#94a3b8");
                 pdf.setLineWidth(1);
@@ -266,6 +284,7 @@ export async function generateVectorReportPDF(
             }
             tableY += row.height;
           }
+        // ── Barcode Element ──
         } else if (el.type === "barcode") {
           const barcode = el as BarcodeElement;
           const displayVal = String(
@@ -276,7 +295,7 @@ export async function generateVectorReportPDF(
           );
 
           try {
-            // Render highly-scalable barcode crisp to offscreen Canvas
+            // Render barcode to an offscreen canvas, then embed as PNG image in the PDF
             const canvas = document.createElement("canvas");
             JsBarcode(canvas, displayVal, {
               format: barcode.format || "CODE128",
@@ -292,12 +311,13 @@ export async function generateVectorReportPDF(
             pdf.addImage(dataUrl, "PNG", elX, elY, el.width, el.height);
           } catch (err) {
             console.error("Vector barcode error:", err);
-            // Draw a fallback vector cross outline
+            // Fallback: draw a red-outlined rectangle with an X to indicate rendering failure
             pdf.setDrawColor("#f87171");
             pdf.setLineWidth(1);
             pdf.rect(elX, elY, el.width, el.height, "D");
             pdf.line(elX, elY, elX + el.width, elY + el.height);
           }
+        // ── QR Code Element ──
         } else if (el.type === "qrcode") {
           const qrcode = el as QRCodeElement;
           const displayVal = String(
@@ -308,7 +328,7 @@ export async function generateVectorReportPDF(
           );
 
           try {
-            // Render high-scale QRCode to 600DPI DataURL
+            // Render QR code to a 300px DataURL for crisp embedding in the PDF
             const dataUrl = await QRCode.toDataURL(displayVal, {
               margin: 1,
               width: 300,
@@ -321,12 +341,14 @@ export async function generateVectorReportPDF(
             pdf.setLineWidth(1);
             pdf.rect(elX, elY, el.width, el.height, "D");
           }
+        // ── Image Element ──
         } else if (el.type === "image") {
           const img = el as any;
           let src =
             img.src || evaluateExpression(img.dataField || "", rb.dataRow);
           if (src) {
             src = src.trim();
+            // Auto-detect and prefix base64 data URIs based on the leading bytes of the encoded string
             if (
               !src.startsWith("data:") &&
               !src.startsWith("http://") &&
@@ -342,6 +364,7 @@ export async function generateVectorReportPDF(
               } else if (src.startsWith("PHN2")) {
                 src = `data:image/svg+xml;base64,${src}`;
               } else if (/^[A-Za-z0-9+/=]+$/.test(src) && src.length > 50) {
+                // Heuristic: looks like base64 but no recognized header — assume PNG
                 src = `data:image/png;base64,${src}`;
               }
             }
@@ -351,8 +374,9 @@ export async function generateVectorReportPDF(
               console.warn("Vector image loader warning:", err);
             }
           }
+        // ── Chart Element ──
         } else if (el.type === "chart") {
-          // Find corresponding canvas from preview DOM element, or fallback
+          // Find the rendered chart canvas in the preview DOM and capture it as an image
           const chartEl = document.querySelector(
             `.chart-element-content canvas`,
           ) as HTMLCanvasElement;
@@ -364,10 +388,12 @@ export async function generateVectorReportPDF(
               console.error("Vector chart integration error:", err);
             }
           }
+        // ── CrossTab Element ──
         } else if (el.type === "crosstab") {
           const xtab = el as any;
           const { rowField, columnField, valueField, valueFunction } = xtab;
 
+          // Determine data source: prefer group data, then all data, then first report data source
           let dataToUse: any[] = [];
           if (rb.renderContext?.groupData && rb.renderContext.groupData.length > 0) {
             dataToUse = rb.renderContext.groupData;
@@ -378,6 +404,7 @@ export async function generateVectorReportPDF(
           }
 
           if (dataToUse.length > 0 && rowField && columnField && valueField) {
+            // Compute the cross-tabulation matrix from the raw data
             const { computeCrossTab } = await import("./reportRenderer");
             const result = computeCrossTab(
               dataToUse,
@@ -397,10 +424,11 @@ export async function generateVectorReportPDF(
                 grandTotal,
               } = result;
 
-              const totalCols = columnHeaders.length + 2;
+              const totalCols = columnHeaders.length + 2; // Data columns + row header + total column
               const colWidth = el.width / totalCols;
               const rowHeight = 24;
 
+              // Chinese labels for aggregation functions
               const funcLabel: Record<string, string> = {
                 sum: "合计",
                 count: "计数",
@@ -411,6 +439,7 @@ export async function generateVectorReportPDF(
 
               let tableY = elY;
 
+              /** Helper to draw a single CrossTab cell with background, border, and text */
               const drawCell = (
                 text: string,
                 x: number,
@@ -445,6 +474,7 @@ export async function generateVectorReportPDF(
                 pdf.text(text, textX, textY, { align, maxWidth: w - 8 });
               };
 
+              // Draw header row: row field label → column headers → aggregation label
               let tableX = elX;
               drawCell(
                 rowField,
@@ -488,6 +518,7 @@ export async function generateVectorReportPDF(
 
               tableY += rowHeight;
 
+              // Draw data rows: row header → cell values → row totals
               for (let ri = 0; ri < rowHeaders.length; ri++) {
                 tableX = elX;
                 const rh = rowHeaders[ri];
@@ -507,6 +538,7 @@ export async function generateVectorReportPDF(
 
                 for (let ci = 0; ci < columnHeaders.length; ci++) {
                   const val = values[ri]?.[ci];
+                  // Format numbers: use 2 decimal places for avg, 0 for others
                   const displayVal =
                     typeof val === "number"
                       ? val.toFixed(valueFunction === "avg" ? 2 : 0)
@@ -547,6 +579,7 @@ export async function generateVectorReportPDF(
                 tableY += rowHeight;
               }
 
+              // Draw totals footer row: aggregation label → column totals → grand total
               tableX = elX;
               drawCell(
                 funcLabel[valueFunction || "sum"] || "合计",
@@ -610,18 +643,25 @@ export async function generateVectorReportPDF(
   return pdf;
 }
 
+// ─── Direct Print ────────────────────────────────────────────────
+
 /**
  * Direct High-Precision Printing Service:
  * Directly outputs the 600DPI vectorized report to standard native PDF stream,
  * opens a hidden print frame, and launches printer immediately, bypassing browser scaling completely.
+ *
+ * @param report - The report definition
+ * @param pages  - Pre-rendered paginated bands
  */
 export async function printVectorReportDirectly(
   report: Report,
   pages: RenderedPage[],
 ): Promise<void> {
+  // Generate the PDF and get a blob URL for the iframe
   const pdfInstance = await generateVectorReportPDF(report, pages);
   const blobUrl = pdfInstance.output("bloburl");
 
+  // Create a hidden iframe to host the PDF and trigger the browser print dialog
   const iframe = document.createElement("iframe");
   iframe.style.position = "fixed";
   iframe.style.right = "0";
@@ -638,7 +678,7 @@ export async function printVectorReportDirectly(
     iframe.contentWindow?.print();
     setTimeout(() => {
       document.body.removeChild(iframe);
-      URL.revokeObjectURL(blobUrl);
-    }, 60000); // Remove iframe after print sequence completes
+      URL.revokeObjectURL(blobUrl); // Free the blob URL reference
+    }, 60000); // Remove iframe after 60s to allow print dialog to complete
   };
 }

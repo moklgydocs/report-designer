@@ -1,16 +1,34 @@
+/**
+ * @file LayerPanel.tsx
+ * Layer/z-order panel for the Report Designer.
+ *
+ * Displays all report elements sorted by zOrder (top-most first) and allows the
+ * user to:
+ * - Select elements by clicking
+ * - Toggle element visibility (eye icon)
+ * - Toggle element lock state (lock icon)
+ * - Reorder elements (move up/down, bring to front, send to back)
+ */
 import React from 'react';
 import { useDesignerStore } from '../../store/designerStore';
 import './LayerPanel.css';
 
+/** Icon map for each element type displayed in the layer list */
 const TYPE_ICONS: Record<string, string> = {
   text: 'T', rectangle: '▭', line: '╱', image: '▨',
   barcode: '▐', qrcode: '⬜', chart: 'ǂ', table: '⊞',
   subreport: '⧉', crosstab: '⊞',
 };
 
+/**
+ * LayerPanel component — lists all report elements sorted by z-order.
+ *
+ * @returns The layer panel JSX with element list and order controls
+ */
 export const LayerPanel: React.FC = () => {
   const { report, selectedElementIds, selectElement, moveLayerUp, moveLayerDown, bringToFront, sendToBack, updateElement } = useDesignerStore();
 
+  /** All elements sorted by descending z-order (top-most element first) */
   const allElements = Object.values(report.elements).sort((a, b) => b.zOrder - a.zOrder);
 
   return (
@@ -19,6 +37,7 @@ export const LayerPanel: React.FC = () => {
         <span className="layer-title">图层</span>
         <span className="layer-count">{allElements.length}</span>
       </div>
+      {/* Element list — each row shows icon, name, visibility & lock toggles */}
       <div className="layer-list">
         {allElements.map(el => (
           <div
@@ -47,6 +66,7 @@ export const LayerPanel: React.FC = () => {
           </div>
         ))}
       </div>
+      {/* Z-order controls — shown only when exactly one element is selected */}
       {selectedElementIds.length === 1 && (
         <div className="layer-order-actions">
           <button className="layer-order-btn" onClick={() => moveLayerUp(selectedElementIds[0])} title="上移一层">↑</button>

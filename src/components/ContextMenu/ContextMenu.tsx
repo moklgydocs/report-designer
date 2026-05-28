@@ -1,8 +1,20 @@
+/**
+ * @file ContextMenu.tsx
+ * Right-click context menu for the Report Designer canvas.
+ *
+ * Displays different menu options depending on what was clicked:
+ * - Element: copy, paste, duplicate, z-order, alignment, delete
+ * - Band: select all elements, add child bands, delete band
+ * - Canvas: paste, add new bands
+ *
+ * Automatically closes on outside click or Escape key.
+ */
 import React, { useEffect, useRef, useCallback } from 'react';
 import { useDesignerStore } from '../../store/designerStore';
 import type { BandType } from '../../types';
 import './ContextMenu.css';
 
+/** State describing the context menu's position and target type */
 export interface ContextMenuState {
   x: number;
   y: number;
@@ -17,15 +29,27 @@ interface Props {
   onClose: () => void;
 }
 
+/** Band type display labels (Chinese) */
 const BAND_LABELS: Record<string, string> = {
   title: '标题', pageHeader: '页眉', reportHeader: '报表头',
   groupHeader: '分组头', data: '数据', groupFooter: '分组尾',
   reportFooter: '报表尾', pageFooter: '页脚',
 };
 
+/** Band types that can be added via the context menu */
 const ADDABLE_BAND_TYPES: BandType[] = ['groupHeader', 'data', 'groupFooter', 'reportHeader', 'reportFooter'];
 
+/**
+ * ContextMenu component — renders a floating right-click menu at the cursor position.
+ *
+ * Listens for mousedown-outside and Escape to auto-close. Each menu item
+ * executes its action via handleAction which also calls onClose to dismiss.
+ *
+ * @param props - Menu state (position & target) and close callback
+ * @returns The context menu JSX
+ */
 export const ContextMenu: React.FC<Props> = ({ menu, onClose }) => {
+  /** Ref to the menu container for click-outside detection */
   const ref = useRef<HTMLDivElement>(null);
   const {
     copySelected, pasteElements, deleteElement, duplicateElement,
@@ -55,6 +79,10 @@ export const ContextMenu: React.FC<Props> = ({ menu, onClose }) => {
     top: menu.y,
   };
 
+  /**
+   * Executes an action and immediately closes the menu.
+   * Used as a wrapper for all menu item click handlers.
+   */
   const handleAction = useCallback((action: () => void) => {
     action();
     onClose();
@@ -62,6 +90,7 @@ export const ContextMenu: React.FC<Props> = ({ menu, onClose }) => {
 
   return (
     <div ref={ref} className="context-menu" style={style}>
+      {/* ── Element context menu: clipboard, z-order, alignment, delete ── */}
       {menu.type === 'element' && (
         <>
           <button className="ctx-item" onClick={() => handleAction(() => copySelected())}>
@@ -82,6 +111,7 @@ export const ContextMenu: React.FC<Props> = ({ menu, onClose }) => {
           </button>
           {selectedElementIds.length > 1 && (
             <>
+              {/* Alignment options — only shown when multiple elements are selected */}
               <div className="ctx-sep" />
               <div className="ctx-group-label">对齐</div>
               <button className="ctx-item" onClick={() => handleAction(() => alignElements('left'))}>左对齐</button>
@@ -98,6 +128,7 @@ export const ContextMenu: React.FC<Props> = ({ menu, onClose }) => {
         </>
       )}
 
+      {/* ── Band context menu: select all elements, add sibling bands, delete ── */}
       {menu.type === 'band' && (
         <>
           <div className="ctx-group-label">{BAND_LABELS[menu.bandType || ''] || menu.bandType} 带</div>
@@ -128,6 +159,7 @@ export const ContextMenu: React.FC<Props> = ({ menu, onClose }) => {
         </>
       )}
 
+      {/* ── Canvas context menu: paste, add new bands ── */}
       {menu.type === 'canvas' && (
         <>
           <button className="ctx-item" onClick={() => handleAction(() => pasteElements())}>

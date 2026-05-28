@@ -183,6 +183,17 @@ export function sortAndFilterData(
 
 // ─── Stage 3: Group Compute ──────────────────────────────────────
 
+/**
+ * Partition data rows into groups based on a group expression.
+ *
+ * Sorts data by the group field, then scans sequentially to detect group
+ * boundaries where the field value changes. Returns one group per distinct value.
+ * If no group expression is provided, all data is placed in a single "__all__" group.
+ *
+ * @param data             - The data rows to partition
+ * @param groupExpression  - Expression referencing the grouping field (e.g. "{category}")
+ * @returns Array of DataGroup objects, one per distinct group value
+ */
 export function computeGroups(
   data: Record<string, any>[],
   groupExpression?: string,
@@ -243,6 +254,19 @@ export function computeGroups(
 
 // ─── Stage 4: Aggregate ──────────────────────────────────────────
 
+/**
+ * Compute an aggregate value over a set of data rows.
+ *
+ * Supports sum, count, avg, min, and max. For count, the field parameter is
+ * ignored and the row count is returned. The field parameter may be wrapped in
+ * curly braces (e.g. "{price}") which are stripped automatically. Supports
+ * dot-notation deep paths (e.g. "order.total").
+ *
+ * @param func  - The aggregate function to apply
+ * @param data  - The data rows to aggregate over
+ * @param field - The field name (or expression) to extract values from
+ * @returns The computed aggregate value, or 0 if data is empty or field is missing
+ */
 export function computeAggregate(
   func: "sum" | "count" | "avg" | "min" | "max",
   data: Record<string, any>[],
@@ -291,6 +315,14 @@ export function computeAggregate(
 
 // ─── Stage 5: Conditional Band Visibility ────────────────────────
 
+/**
+ * Evaluate the printIf condition on a band to determine if it should be rendered.
+ * Returns true if no condition is set, or if the condition evaluates truthily.
+ * On evaluation error, defaults to true (fail-open).
+ *
+ * @param band     - The band to check
+ * @param dataRow  - Optional data row context for expression evaluation
+ */
 function shouldPrintBand(band: Band, dataRow?: Record<string, any>): boolean {
   if (!band.printIf) return true;
   try {
@@ -330,6 +362,7 @@ function expandBands(
       )
     : [];
 
+  // Helper: build a RenderContext with page number and optional overrides
   const makeContext = (
     pn: number,
     extra?: Partial<RenderContext>,
@@ -341,9 +374,11 @@ function expandBands(
     ...extra,
   });
 
+  // Helper: resolve element IDs in a band to their full element objects
   const resolveElements = (band: Band): ReportElement[] =>
     (band.elements || []).map((eid) => report.elements[eid]).filter(Boolean);
 
+  // Helper: compute band height from the maximum bottom edge of its elements (minimum 20px)
   const computeBandHeight = (band: Band): number => {
     const els = resolveElements(band);
     let maxBottom = 0;
@@ -587,6 +622,7 @@ function paginateBands(
   const resolveElements = (band: Band): ReportElement[] =>
     (band.elements || []).map((eid) => report.elements[eid]).filter(Boolean);
 
+  // Factory: create a page header rendered band for a given page number
   const makePageHeaderBand = (
     pn: number,
     totalPages: number,
@@ -611,6 +647,7 @@ function paginateBands(
     };
   };
 
+  // Factory: create a page footer rendered band for a given page number
   const makePageFooterBand = (
     pn: number,
     totalPages: number,
@@ -641,6 +678,7 @@ function paginateBands(
   let currentPageNum = 1;
   let activeGroupHeaders: RenderedBand[] = [];
 
+  /** Close the current page and start a new one. Adds footer to current page, header to next. */
   const startNewPage = (currentBand?: RenderedBand) => {
     if (currentPageBands.length > 0) {
       // Add page footer to current page
@@ -693,7 +731,7 @@ function paginateBands(
     }
   };
 
-  // Initialize first page — do NOT add pageHeader upfront; title band should come first
+  // Initialize first page — do NOT add pageHeader upfront; title band should come first on page 1
   let firstPageHeaderAdded = false;
 
   const usableHeight = contentHeight - pageHeaderHeight - pageFooterHeight;
@@ -702,13 +740,15 @@ function paginateBands(
     const band = expandedBands[i];
     const bandHeight = band.height;
 
-    // Manage activeGroupHeaders stack
+    // Manage activeGroupHeaders stack — tracks which group headers are currently "open"
+    // so they can be repeated on new pages if repeatOnEveryPage is set
     if (band.bandType === "groupHeader") {
       activeGroupHeaders = activeGroupHeaders.filter(
         (gh) => gh.bandId !== band.bandId,
       );
       activeGroupHeaders.push(band);
     } else if (band.bandType === "groupFooter") {
+      // Remove matching group headers from the active stack when the group ends
       activeGroupHeaders = activeGroupHeaders.filter(
         (gh) => gh.groupKey !== band.groupKey,
       );
@@ -719,8 +759,8 @@ function paginateBands(
       startNewPage(band);
     }
 
-    // Check if band fits on current page
-    const effectiveHeaderH = firstPageHeaderAdded ? 0 : pageHeaderHeight;
+    // Check if band fits on current page; if not, start a new page first
+    const effectiveHeaderH = firstPageHeaderAdded ? 0 : pageHeaderHeight; // Account for header not yet placed on first page
     const remainingSpace =
       contentHeight - currentPageHeight - effectiveHeaderH - pageFooterHeight;
 
@@ -768,13 +808,14 @@ function paginateBands(
     currentPageBands.push(band);
     currentPageHeight += bandHeight;
 
-    // Handle keepTogether: if this band and the next should stay together
+    // Handle keepTogether: if this band must stay on the same page as the next band,
+    // check whether the next band fits; if not, move the current band to the next page
     if (band.keepTogether && i + 1 < expandedBands.length) {
       const nextBand = expandedBands[i + 1];
       const nextFits =
         currentPageHeight - pageHeaderHeight + nextBand.height <= usableHeight;
       if (!nextFits) {
-        // Move current band to next page so it stays with the next
+        // Undo adding this band to the current page and restart on a new page
         currentPageBands.pop();
         currentPageHeight -= bandHeight;
         startNewPage(band);
@@ -829,6 +870,13 @@ function paginateBands(
 /**
  * Compute report variables for each page context.
  * Variables can reference =PageNumber, =TotalPages, =Now(), aggregates, etc.
+ *
+ * Iterates over all bands with a dataRow and evaluates variable expressions
+ * (those starting with "=") from the report's variable definitions, writing
+ * the results back into the dataRow so elements can reference them.
+ *
+ * @param report - The report definition containing variable expressions
+ * @param pages  - The paginated rendered pages to compute variables for
  */
 function computeVariables(report: Report, pages: RenderedPage[]): void {
   if (!report.variables || Object.keys(report.variables).length === 0) return;
@@ -855,6 +903,19 @@ function computeVariables(report: Report, pages: RenderedPage[]): void {
 
 // ─── Conditional Formatting ────────────────────────────────────────
 
+/**
+ * Apply conditional formatting rules to an element and return CSS style overrides.
+ *
+ * Evaluates each condition in the element's conditionalFormats array against
+ * the provided data row. When a condition evaluates truthily, the associated
+ * style overrides (backgroundColor, font color/weight/style/decoration) are
+ * merged into the result.
+ *
+ * @param element  - The report element with optional conditionalFormats
+ * @param dataRow  - The current data row for expression evaluation
+ * @param _allData - (Unused) Full dataset, reserved for future aggregate conditions
+ * @returns CSS properties to override on the element's rendered output
+ */
 export function applyConditionalFormatting(
   element: ReportElement,
   dataRow?: Record<string, any>,
@@ -888,6 +949,20 @@ export function applyConditionalFormatting(
 
 // ─── CrossTab Computation ─────────────────────────────────────────
 
+/**
+ * Compute a cross-tabulation (pivot table) from flat data.
+ *
+ * Groups data by unique row and column field values, then applies the
+ * specified aggregate function to the value field for each cell.
+ * Also computes row totals, column totals, and a grand total.
+ *
+ * @param data          - Flat data rows to pivot
+ * @param rowField      - Field name for row grouping
+ * @param columnField   - Field name for column grouping
+ * @param valueField    - Field name whose values are aggregated
+ * @param valueFunction - Aggregate function to apply (sum, count, avg, min, max)
+ * @returns CrossTabResult with headers, values matrix, and totals
+ */
 export function computeCrossTab(
   data: Record<string, any>[],
   rowField: string,
@@ -895,6 +970,7 @@ export function computeCrossTab(
   valueField: string,
   valueFunction: "sum" | "count" | "avg" | "min" | "max",
 ): CrossTabResult {
+  // Collect unique row and column header values
   const rowSet = new Set<string>();
   const colSet = new Set<string>();
 
@@ -903,9 +979,11 @@ export function computeCrossTab(
     colSet.add(String(row[columnField] ?? ""));
   }
 
+  // Sort headers for consistent ordering
   const rowHeaders = Array.from(rowSet).sort();
   const columnHeaders = Array.from(colSet).sort();
 
+  // Build a map of (rowKey|colKey) → array of numeric values for aggregation
   const cellMap = new Map<string, number[]>();
   for (const row of data) {
     const rv = String(row[rowField] ?? "");
@@ -963,7 +1041,11 @@ export function computeCrossTab(
 
 /**
  * Synchronous render: JSON data sources only.
- * Returns expanded bands (no pagination). Used for inline preview.
+ * Returns expanded bands without pagination. Used for inline preview where
+ * page boundaries are not needed.
+ *
+ * @param report - The report definition with inline JSON data
+ * @returns Flat array of rendered bands (not paginated)
  */
 export function renderReport(report: Report): RenderedBand[] {
   const dataBand = report.bands.find((b) => b.type === "data");
@@ -980,6 +1062,12 @@ export function renderReport(report: Report): RenderedBand[] {
 
 /**
  * Paginated sync render: returns full RenderedReport with pages.
+ *
+ * Runs the complete pipeline: data resolution → sort/filter → group → expand →
+ * paginate → variable computation. Only supports inline JSON data sources.
+ *
+ * @param report - The report definition with inline JSON data
+ * @returns Paginated rendered report with page metadata
  */
 export function renderReportPaginated(report: Report): RenderedReport {
   const dataBand = report.bands.find((b) => b.type === "data");
@@ -1001,6 +1089,10 @@ export function renderReportPaginated(report: Report): RenderedReport {
 /**
  * Async pipeline: resolves data from API/DB sources, then renders.
  * Calls onProgress at each stage for UI feedback.
+ *
+ * @param report     - The report definition (may include API/DB data sources)
+ * @param onProgress - Optional callback for progress updates during data resolution
+ * @returns Paginated rendered report with page metadata
  */
 export async function renderReportAsync(
   report: Report,
@@ -1032,6 +1124,14 @@ export async function renderReportAsync(
 /**
  * Progressive (chunked) render for very large datasets.
  * Yields pages as they're computed so the UI can display incrementally.
+ *
+ * Data is processed in chunks of `chunkSize` rows. Each chunk produces a
+ * separate paginated result, and page numbers are adjusted with a rough
+ * offset to maintain uniqueness across chunks.
+ *
+ * @param report    - The report definition
+ * @param chunkSize - Number of data rows per processing chunk (default 100)
+ * @yields RenderedPage objects as each chunk is computed
  */
 export async function* renderReportProgressive(
   report: Report,
@@ -1081,6 +1181,22 @@ export async function* renderReportProgressive(
   }
 }
 
+/**
+ * Measure the estimated rendered height of text given a constrained width.
+ *
+ * Performs a character-level width estimation: CJK characters (charCode > 255)
+ * are assumed to be full-width (1× fontSize), while Latin characters are
+ * approximately 0.55× fontSize. Line breaks occur when accumulated width
+ * exceeds the available space.
+ *
+ * @param text       - The text string to measure
+ * @param width      - Available width in pixels
+ * @param fontSize   - Font size in pixels
+ * @param _fontFamily - (Unused) Font family — reserved for future refinement
+ * @param _bold      - (Unused) Bold flag — reserved for future refinement
+ * @param wordWrap   - Whether word wrap is enabled; if false, returns single-line height
+ * @returns Estimated height in pixels
+ */
 export function measureTextHeight(
   text: string,
   width: number,
@@ -1120,21 +1236,38 @@ export function measureTextHeight(
   return Math.ceil(lineCount * fontSize * 1.35) + 4;
 }
 
+/**
+ * Layout and auto-size elements within a band.
+ *
+ * Clones all elements, evaluates expressions to resolve display text, and
+ * auto-sizes text/table/subreport elements whose content exceeds their
+ * original height. When an element grows, all elements below it are shifted
+ * downward to prevent overlap. Returns the final elements and the minimum
+ * band height needed to contain them all.
+ *
+ * @param elements       - The report elements to layout
+ * @param dataRow        - Current data row for expression evaluation
+ * @param renderContext  - Rendering context (page number, totals, etc.)
+ * @returns Object with the laid-out elements and the computed minimum height
+ */
 export function layoutBandElements(
   elements: ReportElement[],
   dataRow: Record<string, any> | undefined,
   renderContext: RenderContext,
 ): { elements: ReportElement[]; height: number } {
+  // Deep-clone elements to avoid mutating the report template
   const cloned = elements.map(
     (el) => JSON.parse(JSON.stringify(el)) as ReportElement,
   );
 
+  // Build layout items tracking original positions for shift calculations
   const layoutItems = cloned.map((el) => ({
     el,
     originalY: el.y,
     originalHeight: el.height,
   }));
 
+  // Process elements top-to-bottom so growth propagates correctly
   layoutItems.sort((a, b) => a.originalY - b.originalY);
 
   for (let i = 0; i < layoutItems.length; i++) {
@@ -1169,11 +1302,11 @@ export function layoutBandElements(
     } else if (el.type === "table") {
       const tableEl = el as TableElement;
       const { tableData } = tableEl;
-      let totalHeightIncr = 0;
+      let totalHeightIncr = 0; // Accumulated height growth from auto-growing rows
 
       for (let ri = 0; ri < tableData.rows.length; ri++) {
         const row = tableData.rows[ri];
-        let maxRowGrewH = row.height;
+        let maxRowGrewH = row.height; // Track the tallest auto-grown cell in this row
 
         for (let ci = 0; ci < tableData.columns.length; ci++) {
           const cell = tableData.cells[ri]?.[ci];
@@ -1211,11 +1344,14 @@ export function layoutBandElements(
         el.height = item.originalHeight + totalHeightIncr;
       }
     } else if (el.type === "subreport") {
+      // Expand the subreport template, layout its bands, and embed the resulting
+      // elements as children offset by the parent element's position
       const subEl = el as any;
       const subReportId = subEl.reportId;
 
       const subreportTemplate = getSubreportTemplate(subReportId);
 
+      // Resolve subreport parameters from expressions
       const subParams: Record<string, any> = {};
       if (subEl.parameters) {
         for (const [key, expr] of Object.entries(subEl.parameters)) {
@@ -1255,6 +1391,7 @@ export function layoutBandElements(
         };
       });
 
+      // Flatten subreport bands into a list of embedded elements offset by parent position
       let subYOffset = 0;
       const embeddedElements: ReportElement[] = [];
 
@@ -1276,12 +1413,16 @@ export function layoutBandElements(
       (item as any).embedded = embeddedElements;
     }
 
+    // If this element grew beyond its original height, shift all elements
+    // that start below it downward by the growth delta
     const delta = el.height - item.originalHeight;
     if (delta > 0) {
       const originalBottom = item.originalY + item.originalHeight;
       for (let j = 0; j < layoutItems.length; j++) {
         if (j === i) continue;
         const other = layoutItems[j];
+        // Shift elements whose top edge is at or below the original bottom
+        // (2px tolerance to avoid shifting overlapping elements)
         if (other.originalY >= originalBottom - 2) {
           other.el.y += delta;
           other.originalY += delta;
@@ -1310,6 +1451,15 @@ export function layoutBandElements(
   };
 }
 
+/**
+ * Get a subreport template by its report ID.
+ *
+ * Returns a built-in template for known IDs ("purchase_order", "sales_invoice"),
+ * or a minimal default subreport template with a header and a single data row.
+ *
+ * @param reportId - The subreport identifier
+ * @returns A Report object representing the subreport template
+ */
 export function getSubreportTemplate(reportId: string | undefined): Report {
   if (reportId === "purchase_order") {
     return createPurchaseOrderTemplate();

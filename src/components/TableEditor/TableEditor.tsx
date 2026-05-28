@@ -1,14 +1,35 @@
+/**
+ * @file TableEditor.tsx
+ * Excel-like table cell editor for the Report Designer.
+ *
+ * Provides an interactive grid editor that supports:
+ * - Cell selection (click, drag, keyboard arrows)
+ * - Inline cell editing (double-click or direct typing)
+ * - Cell merge/split with rowSpan/colSpan tracking
+ * - Row/column add/remove and resize via drag handles
+ * - Diagonal line toggle per cell
+ * - Clipboard copy/paste (Ctrl+C / Ctrl+V)
+ * - Merged-cell-aware selection expansion via fixed-point iteration
+ */
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import type { TableElement, ReportElement, TableCell, TableRow, TableColumn } from '../../types';
 import { useDesignerStore } from '../../store/designerStore';
 import './TableEditor.css';
 
+/** Props for the TableEditor component */
 interface TableEditorProps {
   element: TableElement;
   onUpdate: (id: string, updates: Partial<ReportElement>) => void;
 }
 
+/**
+ * Generates default cell styling properties for a new table cell.
+ * Header cells receive bolder font and a distinct background color.
+ *
+ * @param isHeader - Whether the cell belongs to a header row
+ * @returns Default cell properties (excluding id, content, and dataField)
+ */
 const defaultCellProps = (isHeader = false): Omit<TableCell, 'id' | 'content' | 'dataField'> => ({
   rowSpan: 1, colSpan: 1,
   font: { family: 'Microsoft YaHei', size: 12, bold: isHeader, italic: false, underline: false, color: isHeader ? '#1e293b' : '#333333' },
@@ -122,26 +143,49 @@ const expandSelectionBounds = (
   return { selected, minRow, maxRow, minCol, maxCol };
 };
 
+/**
+ * TableEditor component — an Excel-like interactive table grid editor.
+ *
+ * Manages cell selection, inline editing, merge/split, row/column resize,
+ * and keyboard navigation. Uses local state for resize previews and commits
+ * to the store only on mouse-up.
+ *
+ * @param props - The table element and update callback
+ * @returns The table editor JSX
+ */
 export const TableEditor: React.FC<TableEditorProps> = ({ element, onUpdate }) => {
   const { tableData } = element;
+  /** Ref to the outer container for focus management */
   const containerRef = useRef<HTMLDivElement>(null);
+  /** Currently selected cells (may span a merged region) */
   const [selectedCells, setSelectedCells] = useState<{ row: number; col: number }[]>([]);
+  /** The cell currently being edited inline (null when not editing) */
   const [editingCell, setEditingCell] = useState<{ row: number; col: number } | null>(null);
+  /** The current text value of the cell being edited */
   const [editValue, setEditValue] = useState('');
   const { selectTableCell } = useDesignerStore();
 
-  // Drag selection state
+  /* ── Drag selection state ── */
   const isDraggingSelect = useRef(false);
   const dragStartCell = useRef<{ row: number; col: number } | null>(null);
 
-  // Resize state
+  /* ── Resize state (local preview before committing) ── */
+  /** Local column widths during resize drag; null means using store values */
   const [localColumns, setLocalColumns] = useState<TableColumn[] | null>(null);
+  /** Local row heights during resize drag; null means using store values */
   const [localRows, setLocalRows] = useState<TableRow[] | null>(null);
+  /** Tracks the starting mouse position and size for resize calculations */
   const resizeStartRef = useRef<{ pos: number; size: number } | null>(null);
 
+  /** Active columns: use local preview during resize, otherwise store data */
   const activeColumns = localColumns ?? tableData.columns;
+  /** Active rows: use local preview during resize, otherwise store data */
   const activeRows = localRows ?? tableData.rows;
 
+  /**
+   * Initiates column resize drag. Updates local preview on mousemove,
+   * commits to store on mouseup.
+   */
   const handleColumnResizeStart = useCallback((colIndex: number, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -174,6 +218,10 @@ export const TableEditor: React.FC<TableEditorProps> = ({ element, onUpdate }) =
     document.addEventListener('mouseup', handleUp);
   }, [tableData, element.id, onUpdate]);
 
+  /**
+   * Initiates row resize drag. Updates local preview on mousemove,
+   * commits to store (including total element height) on mouseup.
+   */
   const handleRowResizeStart = useCallback((rowIndex: number, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -219,6 +267,9 @@ export const TableEditor: React.FC<TableEditorProps> = ({ element, onUpdate }) =
     return () => window.removeEventListener('mouseup', handleMouseUp);
   }, []);
 
+  /* ── Row / Column CRUD operations ── */
+
+  /** Appends a new row at the bottom of the table with default-height cells */
   const addRow = () => {
     const newRow: TableRow = { id: uuidv4(), height: 28, isHeader: false };
     const newCells: TableCell[] = tableData.columns.map(() => ({
@@ -231,6 +282,7 @@ export const TableEditor: React.FC<TableEditorProps> = ({ element, onUpdate }) =
     } as any);
   };
 
+  /** Appends a new column to the right of the table with default-width cells */
   const addColumn = () => {
     const newCol: TableColumn = { id: uuidv4(), width: 120 };
     const newCells = tableData.rows.map((row) => ({
@@ -247,6 +299,10 @@ export const TableEditor: React.FC<TableEditorProps> = ({ element, onUpdate }) =
     } as any);
   };
 
+  /**
+   * Removes a row at the given index. Adjusts rowSpan of any merged cells
+   * that span across the removed row. Prevents removal if only one row remains.
+   */
   const removeRow = (rowIndex: number) => {
     if (tableData.rows.length <= 1) return;
     const newCells = tableData.cells.map(row => row.map(c => ({ ...c })));
@@ -269,6 +325,10 @@ export const TableEditor: React.FC<TableEditorProps> = ({ element, onUpdate }) =
     } as any);
   };
 
+  /**
+   * Removes a column at the given index. Adjusts colSpan of any merged cells
+   * that span across the removed column. Prevents removal if only one column remains.
+   */
   const removeColumn = (colIndex: number) => {
     if (tableData.columns.length <= 1) return;
     const newCells = tableData.cells.map(row => row.map(c => ({ ...c })));
@@ -295,6 +355,13 @@ export const TableEditor: React.FC<TableEditorProps> = ({ element, onUpdate }) =
     } as any);
   };
 
+  /* ── Merge / Split operations ── */
+
+  /**
+   * Merges all currently selected cells into a single cell.
+   * The top-left cell absorbs the span; all others get rowSpan/colSpan = 0.
+   * Requires at least 2 selected cells.
+   */
   const mergeCells = () => {
     if (selectedCells.length < 2) return;
     const minRow = Math.min(...selectedCells.map(c => c.row));
@@ -319,6 +386,11 @@ export const TableEditor: React.FC<TableEditorProps> = ({ element, onUpdate }) =
     setSelectedCells([]);
   };
 
+  /**
+   * Splits a previously merged cell back into individual cells.
+   * Resets each sub-cell's rowSpan/colSpan to 1 and clears their content.
+   * Requires exactly one selected cell that has span > 1.
+   */
   const splitCells = () => {
     if (selectedCells.length !== 1) return;
     const { row, col } = selectedCells[0];
@@ -344,6 +416,9 @@ export const TableEditor: React.FC<TableEditorProps> = ({ element, onUpdate }) =
     setSelectedCells([]);
   };
 
+  /* ── Inline editing ── */
+
+  /** Opens inline edit mode for the cell at (ri, ci), pre-filling with current content */
   const startEdit = (ri: number, ci: number) => {
     const cell = tableData.cells[ri]?.[ci];
     if (cell) {
@@ -352,6 +427,7 @@ export const TableEditor: React.FC<TableEditorProps> = ({ element, onUpdate }) =
     }
   };
 
+  /** Commits the current edit value to the store and exits edit mode */
   const commitEdit = () => {
     if (!editingCell) return;
     const newCells = tableData.cells.map(row => row.map(c => ({ ...c })));
@@ -362,13 +438,20 @@ export const TableEditor: React.FC<TableEditorProps> = ({ element, onUpdate }) =
     setEditingCell(null);
   };
 
+  /** Toggles the diagonal line property on a cell */
   const toggleDiagonal = (ri: number, ci: number) => {
     const newCells = tableData.cells.map(row => row.map(c => ({ ...c })));
     newCells[ri][ci].diagonalLine = !newCells[ri][ci].diagonalLine;
     onUpdate(element.id, { tableData: { ...tableData, cells: newCells } } as any);
   };
 
-  // Drag selection handlers
+  /* ── Cell selection (click + drag) ── */
+
+  /**
+   * Handles mousedown on a cell — starts drag selection.
+   * If clicking a merged cell, expands selection to cover the full merge.
+   * Commits any in-progress edit before changing selection.
+   */
   const handleCellMouseDown = (ri: number, ci: number, e: React.MouseEvent) => {
     if (e.button !== 0) return; // Only trigger for left click
     if (editingCell) {
@@ -390,6 +473,10 @@ export const TableEditor: React.FC<TableEditorProps> = ({ element, onUpdate }) =
     selectTableCell({ elementId: element.id, row: ri, col: ci });
   };
 
+  /**
+   * Handles mouseenter during drag — extends selection from the start cell
+   * to the current cell, expanding for merged cells.
+   */
   const handleCellMouseEnter = (ri: number, ci: number) => {
     if (!isDraggingSelect.current || !dragStartCell.current) return;
 
@@ -404,7 +491,19 @@ export const TableEditor: React.FC<TableEditorProps> = ({ element, onUpdate }) =
     setSelectedCells(bounds.selected);
   };
 
-  // Keyboard navigation & editor access
+  /* ── Keyboard navigation & shortcuts ── */
+
+  /**
+   * Central keyboard handler for the table editor.
+   *
+   * Supports:
+   * - Arrow keys: move selection (with merged-cell expansion)
+   * - Tab / Shift+Tab: move horizontally
+   * - Enter: start editing the active cell
+   * - Delete/Backspace: clear content of all selected cells
+   * - Ctrl+C / Ctrl+V: clipboard copy/paste for single cell
+   * - Direct character typing: enters edit mode with that character
+   */
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (editingCell) return; // Let editor input consume typing
 
@@ -513,18 +612,22 @@ export const TableEditor: React.FC<TableEditorProps> = ({ element, onUpdate }) =
     }
   };
 
-  // Determine if a column letter or row number is currently selected to highlight them Excel-style
+  /* ── Row/column header highlighting (Excel-style) ── */
+
+  /** Set of row indices that have at least one selected cell */
   const selectedRows = new Set(selectedCells.map(c => c.row));
+  /** Set of column indices that have at least one selected cell */
   const selectedCols = new Set(selectedCells.map(c => c.col));
 
+  /* ── Render ── */
+
   return (
-    <div
-      className="table-editor"
       ref={containerRef}
       tabIndex={0}
       onKeyDown={handleKeyDown}
       style={{ outline: 'none' }}
     >
+      {/* Toolbar: add row/column, merge, split, diagonal line */}
       <div className="table-editor-toolbar">
         <button className="te-btn" onClick={addRow} title="添加行">+行</button>
         <button className="te-btn" onClick={addColumn} title="添加列">+列</button>
@@ -533,7 +636,9 @@ export const TableEditor: React.FC<TableEditorProps> = ({ element, onUpdate }) =
         <button className="te-btn" onClick={() => { if (selectedCells.length === 1) toggleDiagonal(selectedCells[0].row, selectedCells[0].col); }} title="斜线" disabled={selectedCells.length !== 1}>斜线</button>
       </div>
 
+      {/* Grid area: row controls (left) + column controls (top) + cell grid */}
       <div className="table-editor-grid-wrapper">
+        {/* Row number controls — show row index, delete button, and resize handle */}
         <div className="table-editor-row-controls">
           {activeRows.map((row, ri) => {
             const isRowSelected = selectedRows.has(ri);
@@ -551,7 +656,9 @@ export const TableEditor: React.FC<TableEditorProps> = ({ element, onUpdate }) =
           })}
         </div>
 
+        {/* Column header controls + cell grid */}
         <div className="table-editor-grid-container">
+          {/* Column letter controls — show letter, delete button, and resize handle */}
           <div className="table-editor-col-controls">
             {activeColumns.map((col, ci) => {
               const isColSelected = selectedCols.has(ci);
@@ -569,12 +676,14 @@ export const TableEditor: React.FC<TableEditorProps> = ({ element, onUpdate }) =
             })}
           </div>
 
+          {/* The actual table grid with merged-cell rendering */}
           <table className="table-editor-grid">
             <colgroup>{activeColumns.map(col => <col key={col.id} style={{ width: col.width }} />)}</colgroup>
             <tbody>
               {tableData.cells.map((row, ri) => (
                 <tr key={ri} style={{ height: activeRows[ri]?.height ?? tableData.rows[ri].height }}>
                   {row.map((cell, ci) => {
+                    // Skip sub-cells of a merged region (rowSpan/colSpan = 0)
                     if (cell.rowSpan <= 0 || cell.colSpan <= 0) return null;
                     const isSelected = selectedCells.some(s => s.row === ri && s.col === ci);
                     const isEditing = editingCell?.row === ri && editingCell?.col === ci;

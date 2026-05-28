@@ -1,3 +1,11 @@
+/**
+ * @file PropertyPanel.tsx
+ * @description Right-side property panel for the Report Designer. Provides a tabbed interface
+ * for editing element properties, band management, page settings, and data source configuration.
+ * Supports all report element types (text, rectangle, line, image, barcode, QR code, chart,
+ * table, cross-tab) with type-specific property editors. Includes undo/redo history integration
+ * and data source management (JSON, API, database).
+ */
 import React, { useState, useCallback, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useDesignerStore } from '../../store/designerStore';
@@ -11,12 +19,18 @@ import { TableEditor } from '../TableEditor/TableEditor';
 import { testConnection, discoverFields } from '../../services/api';
 import './PropertyPanel.css';
 
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Available font families for text elements (Chinese + Latin fonts) */
 const FONT_FAMILIES = [
   'Microsoft YaHei', 'SimSun', 'SimHei', 'KaiTi', 'FangSong',
   'Arial', 'Times New Roman', 'Courier New', 'Verdana',
   'Georgia', 'Tahoma', 'Impact',
 ];
 
+/** Band type definitions with Chinese labels for the band type selector */
 const BAND_TYPES: { value: BandType; label: string }[] = [
   { value: 'title', label: '标题' },
   { value: 'pageHeader', label: '页眉' },
@@ -28,12 +42,35 @@ const BAND_TYPES: { value: BandType; label: string }[] = [
   { value: 'pageFooter', label: '页脚' },
 ];
 
+// ---------------------------------------------------------------------------
+// Main PropertyPanel Component
+// ---------------------------------------------------------------------------
+
+/**
+ * Main property panel component for the Report Designer.
+ * Displays a tabbed interface with four tabs: Element, Band, Page, and Data.
+ * - Element tab: Shows properties of the currently selected report element
+ * - Band tab: Manage report bands (add, remove, configure)
+ * - Page tab: Page size, margins, orientation, and column settings
+ * - Data tab: Data source configuration (JSON, API, database)
+ *
+ * @returns The rendered property panel with tab navigation
+ */
 export const PropertyPanel: React.FC = () => {
   const { report, selectedElementIds, updateElement, updateBand, addBand, removeBand, pushHistory } = useDesignerStore();
   const [activeTab, setActiveTab] = useState<'element' | 'band' | 'page' | 'data'>('element');
+  /** Ref to track whether a history snapshot has been pushed for the current edit sequence.
+   *  Ensures undo pushes one snapshot before the first change in a sequence, not per-keystroke. */
   const historyPushedRef = useRef(false);
 
-  // Wrapper that pushes history on first edit in a sequence
+  /**
+   * Wraps `updateElement` with undo/redo history support.
+   * Pushes a history snapshot on the first edit in a sequence, then skips
+   * subsequent pushes until `historyPushedRef` is reset (on element deselection/mount).
+   *
+   * @param id - The element ID to update
+   * @param updates - Partial element properties to merge
+   */
   const updateWithHistory = useCallback((id: string, updates: Partial<ReportElement>) => {
     if (!historyPushedRef.current) {
       pushHistory();
@@ -43,12 +80,20 @@ export const PropertyPanel: React.FC = () => {
   }, [pushHistory, updateElement]);
 
 
+  /** The currently selected element (only when exactly one element is selected) */
   const selectedElement = selectedElementIds.length === 1
     ? report.elements[selectedElementIds[0]]
     : null;
 
+  /** The band that contains any of the currently selected elements */
   const selectedBand = report.bands.find(b => b.elements.some(eid => selectedElementIds.includes(eid)));
 
+  /**
+   * Renders the Element tab content.
+   * Shows a placeholder when no element is selected, or displays
+   * basic properties (name, position, size, rotation, visibility, lock)
+   * plus type-specific properties and conditional formatting rules.
+   */
   const renderElementProperties = () => {
     if (!selectedElement) {
       return (
@@ -120,7 +165,8 @@ export const PropertyPanel: React.FC = () => {
         {/* Type-specific properties */}
         {renderTypeSpecificProperties(selectedElement)}
 
-        {/* Conditional Formatting */}
+        {/* Conditional Formatting — each rule has a condition expression, background color, and font color.
+            Users can add multiple rules; each rule is evaluated at render time to style the element. */}
         <PropSection title="条件格式">
           {(selectedElement?.conditionalFormats || []).map((cf, idx) => (
             <div key={cf.id} className="conditional-format-item" style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 4, padding: 6, marginBottom: 4 }}>
@@ -166,6 +212,13 @@ export const PropertyPanel: React.FC = () => {
     );
   };
 
+  /**
+   * Dispatches to the appropriate type-specific property editor
+   * based on the element's `type` field.
+   *
+   * @param el - The report element to render properties for
+   * @returns The matching type-specific property component, or null for unknown types
+   */
   const renderTypeSpecificProperties = (el: ReportElement) => {
     switch (el.type) {
       case 'text': return <TextProperties element={el} onUpdate={updateWithHistory} />;
@@ -181,6 +234,7 @@ export const PropertyPanel: React.FC = () => {
     }
   };
 
+  /** Renders the Band tab content — band list management and selected band configuration */
   const renderBandProperties = () => (
     <div className="prop-sections">
       <PropSection title="Band 管理">
@@ -269,6 +323,7 @@ export const PropertyPanel: React.FC = () => {
     </div>
   );
 
+  /** Renders the Page tab content — page size, orientation, margins, columns, and preset paper sizes */
   const renderPageProperties = () => (
     <div className="prop-sections">
       <PropSection title="页面设置">
@@ -346,6 +401,7 @@ export const PropertyPanel: React.FC = () => {
     </div>
   );
 
+  /** Renders the Data tab content — delegates to the DataSourcePanel sub-component */
   const renderDataProperties = () => (
     <DataSourcePanel />
   );
@@ -373,8 +429,18 @@ export const PropertyPanel: React.FC = () => {
   );
 };
 
-// Sub-components
+// ---------------------------------------------------------------------------
+// Reusable UI Primitives (PropSection, PropRow)
+// ---------------------------------------------------------------------------
 
+/**
+ * Collapsible section component for grouping related properties.
+ * Renders a clickable header with an arrow indicator and a toggleable body.
+ *
+ * @param title - The section heading text
+ * @param children - The section body content
+ * @param defaultOpen - Whether the section is expanded by default (default: true)
+ */
 const PropSection: React.FC<{ title: string; children: React.ReactNode; defaultOpen?: boolean }> = ({ title, children, defaultOpen = true }) => {
   const [open, setOpen] = useState(defaultOpen);
   return (
@@ -388,6 +454,13 @@ const PropSection: React.FC<{ title: string; children: React.ReactNode; defaultO
   );
 };
 
+/**
+ * Single property row with a label on the left and a value/input on the right.
+ * Standard layout primitive used throughout the property panel.
+ *
+ * @param label - The property name displayed on the left
+ * @param children - The property editor (input, select, toggle, etc.) on the right
+ */
 const PropRow: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
   <div className="prop-row">
     <label className="prop-label">{label}</label>
@@ -395,6 +468,19 @@ const PropRow: React.FC<{ label: string; children: React.ReactNode }> = ({ label
   </div>
 );
 
+// ---------------------------------------------------------------------------
+// Type-Specific Property Editors
+// ---------------------------------------------------------------------------
+
+/**
+ * Property editor for TextElement.
+ * Provides controls for text content, data field binding, expression evaluation,
+ * font configuration (family, size, color, bold/italic/underline), text alignment,
+ * word wrap, borders, and padding.
+ *
+ * @param element - The text element being edited
+ * @param onUpdate - Callback to apply property changes with history support
+ */
 const TextProperties: React.FC<{ element: TextElement; onUpdate: (id: string, updates: Partial<ReportElement>) => void }> = ({ element, onUpdate }) => (
   <>
     <PropSection title="文本内容">
@@ -560,6 +646,13 @@ const TextProperties: React.FC<{ element: TextElement; onUpdate: (id: string, up
   </>
 );
 
+/**
+ * Property editor for RectangleElement.
+ * Controls: fill color, border color, border width, border radius.
+ *
+ * @param element - The rectangle element being edited
+ * @param onUpdate - Callback to apply property changes with history support
+ */
 const RectangleProperties: React.FC<{ element: RectangleElement; onUpdate: (id: string, updates: Partial<ReportElement>) => void }> = ({ element, onUpdate }) => (
   <PropSection title="矩形属性">
     <PropRow label="填充色">
@@ -581,6 +674,13 @@ const RectangleProperties: React.FC<{ element: RectangleElement; onUpdate: (id: 
   </PropSection>
 );
 
+/**
+ * Property editor for LineElement.
+ * Controls: direction (horizontal/vertical/diagonal), color, line style.
+ *
+ * @param element - The line element being edited
+ * @param onUpdate - Callback to apply property changes with history support
+ */
 const LineProperties: React.FC<{ element: LineElement; onUpdate: (id: string, updates: Partial<ReportElement>) => void }> = ({ element, onUpdate }) => (
   <PropSection title="线条属性">
     <PropRow label="方向">
@@ -608,6 +708,13 @@ const LineProperties: React.FC<{ element: LineElement; onUpdate: (id: string, up
   </PropSection>
 );
 
+/**
+ * Property editor for ImageElement.
+ * Controls: image source URL/base64, object-fit mode, data field binding.
+ *
+ * @param element - The image element being edited
+ * @param onUpdate - Callback to apply property changes with history support
+ */
 const ImageProperties: React.FC<{ element: ImageElement; onUpdate: (id: string, updates: Partial<ReportElement>) => void }> = ({ element, onUpdate }) => (
   <PropSection title="图片属性">
     <PropRow label="图片地址">
@@ -630,6 +737,13 @@ const ImageProperties: React.FC<{ element: ImageElement; onUpdate: (id: string, 
   </PropSection>
 );
 
+/**
+ * Property editor for BarcodeElement.
+ * Controls: barcode value, encoding format (CODE128, EAN13, CODE39), show text toggle.
+ *
+ * @param element - The barcode element being edited
+ * @param onUpdate - Callback to apply property changes with history support
+ */
 const BarcodeProperties: React.FC<{ element: BarcodeElement; onUpdate: (id: string, updates: Partial<ReportElement>) => void }> = ({ element, onUpdate }) => (
   <PropSection title="条形码属性">
     <PropRow label="编码值">
@@ -654,6 +768,13 @@ const BarcodeProperties: React.FC<{ element: BarcodeElement; onUpdate: (id: stri
   </PropSection>
 );
 
+/**
+ * Property editor for QRCodeElement.
+ * Controls: QR code value, error correction level (L/M/Q/H).
+ *
+ * @param element - The QR code element being edited
+ * @param onUpdate - Callback to apply property changes with history support
+ */
 const QRCodeProperties: React.FC<{ element: QRCodeElement; onUpdate: (id: string, updates: Partial<ReportElement>) => void }> = ({ element, onUpdate }) => (
   <PropSection title="二维码属性">
     <PropRow label="编码值">
@@ -672,6 +793,13 @@ const QRCodeProperties: React.FC<{ element: QRCodeElement; onUpdate: (id: string
   </PropSection>
 );
 
+/**
+ * Property editor for ChartElement.
+ * Controls: chart type (bar, line, pie, area), title, background color.
+ *
+ * @param element - The chart element being edited
+ * @param onUpdate - Callback to apply property changes with history support
+ */
 const ChartProperties: React.FC<{ element: ChartElement; onUpdate: (id: string, updates: Partial<ReportElement>) => void }> = ({ element, onUpdate }) => (
   <PropSection title="图表属性">
     <PropRow label="图表类型">
@@ -698,6 +826,14 @@ const ChartProperties: React.FC<{ element: ChartElement; onUpdate: (id: string, 
   </PropSection>
 );
 
+/**
+ * Property editor for TableElement.
+ * Shows table-level settings (repeat header, data field) and embeds the TableEditor
+ * for cell management. When a cell is selected, also renders CellProperties.
+ *
+ * @param element - The table element being edited
+ * @param onUpdate - Callback to apply property changes with history support
+ */
 const TableProperties: React.FC<{ element: TableElement; onUpdate: (id: string, updates: Partial<ReportElement>) => void }> = ({ element, onUpdate }) => {
   const { selectedTableCell } = useDesignerStore();
   return (
@@ -728,16 +864,35 @@ const TableProperties: React.FC<{ element: TableElement; onUpdate: (id: string, 
   );
 };
 
+/**
+ * Property editor for a single table cell.
+ * Provides controls for cell content, data field binding, expression, font styling,
+ * alignment, borders, padding, word wrap, auto-grow, display mask, and formatting.
+ * Skips rendering for merged/hidden cells (where rowSpan or colSpan <= 0).
+ *
+ * @param element - The parent table element
+ * @param rowIndex - The row index of the cell being edited
+ * @param colIndex - The column index of the cell being edited
+ * @param onUpdate - Callback to apply property changes with history support
+ */
 const CellProperties: React.FC<{
   element: TableElement;
   rowIndex: number;
   colIndex: number;
   onUpdate: (id: string, updates: Partial<ReportElement>) => void;
 }> = ({ element, rowIndex, colIndex, onUpdate }) => {
+  /** Look up the cell at the given row/col; skip if merged or hidden */
   const cell = element.tableData.cells[rowIndex]?.[colIndex];
   if (!cell || cell.rowSpan <= 0 || cell.colSpan <= 0) return null;
 
+  /**
+   * Updates a single cell's properties by deep-cloning the cell grid,
+   * applying the changes, and propagating through the onUpdate callback.
+   *
+   * @param cellUpdates - Partial cell properties to merge into the target cell
+   */
   const updateCell = (cellUpdates: Partial<TableCell>) => {
+    // Deep-clone the entire cell grid to ensure immutable updates
     const newCells = element.tableData.cells.map(row => row.map(c => ({ ...c })));
     if (newCells[rowIndex]?.[colIndex]) {
       newCells[rowIndex][colIndex] = { ...newCells[rowIndex][colIndex], ...cellUpdates };
@@ -745,16 +900,37 @@ const CellProperties: React.FC<{
     }
   };
 
+  /**
+   * Updates font properties on the current cell, preserving existing font config
+   * and providing sensible defaults if font is not yet initialized.
+   *
+   * @param fontUpdates - Partial font properties to merge
+   */
   const updateCellFont = (fontUpdates: Partial<FontConfig>) => {
     updateCell({ font: { ...(cell.font || { family: 'Microsoft YaHei', size: 12, bold: false, italic: false, underline: false, color: '#333333' }), ...fontUpdates } });
   };
 
+  /**
+   * Updates a single border side on the current cell.
+   * Preserves existing border config and defaults to solid black if uninitialized.
+   *
+   * @param side - Which border side to update (top/bottom/left/right)
+   * @param style - The border line style
+   * @param color - Optional border color override
+   */
   const updateCellBorder = (side: 'top' | 'bottom' | 'left' | 'right', style: BorderStyle, color?: string) => {
     const borders: Borders = { ...(cell.borders || { top: { style: 'solid', width: 1, color: '#000' }, bottom: { style: 'solid', width: 1, color: '#000' }, left: { style: 'solid', width: 1, color: '#000' }, right: { style: 'solid', width: 1, color: '#000' } }) };
     borders[side] = { ...borders[side], style, width: 1, color: color ?? borders[side]?.color ?? '#000000' };
     updateCell({ borders });
   };
 
+  /**
+   * Updates a single padding side on the current cell.
+   * Defaults: top/bottom = 2px, left/right = 4px.
+   *
+   * @param side - Which padding side to update
+   * @param value - The new padding value in pixels
+   */
   const updateCellPadding = (side: 'top' | 'right' | 'bottom' | 'left', value: number) => {
     const padding: Padding = { ...(cell.padding || { top: 2, right: 4, bottom: 2, left: 4 }) };
     padding[side] = value;
@@ -911,6 +1087,13 @@ const CellProperties: React.FC<{
   );
 };
 
+/**
+ * Property editor for CrossTabElement (pivot/cross-tabulation table).
+ * Controls: row field, column field, value field, aggregation function (sum/count/avg/min/max).
+ *
+ * @param element - The cross-tab element being edited
+ * @param onUpdate - Callback to apply property changes with history support
+ */
 const CrossTabProperties: React.FC<{ element: CrossTabElement; onUpdate: (id: string, updates: Partial<ReportElement>) => void }> = ({ element, onUpdate }) => (
   <PropSection title="交叉表属性">
     <PropRow label="行字段">
@@ -938,6 +1121,21 @@ const CrossTabProperties: React.FC<{ element: CrossTabElement; onUpdate: (id: st
   </PropSection>
 );
 
+// ---------------------------------------------------------------------------
+// Data Source Panel
+// ---------------------------------------------------------------------------
+
+/**
+ * Sub-component for the Data tab. Manages report data sources (JSON, API, database).
+ * Features:
+ * - Lists existing data sources with field tags (draggable for data binding)
+ * - Add new data sources from JSON input, API endpoints, or database connections
+ * - Auto-discovers fields via backend service when adding API/DB sources
+ * - Test connection functionality for API and database sources
+ * - Quick-load sample employee data for testing
+ *
+ * @returns The data source management panel
+ */
 const DataSourcePanel: React.FC = () => {
   const { report, addDataSource, removeDataSource } = useDesignerStore();
   const [newDsName, setNewDsName] = useState('');
@@ -950,16 +1148,23 @@ const DataSourcePanel: React.FC = () => {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
+  /**
+   * Adds a new JSON data source from the user-provided JSON text input.
+   * Parses the JSON, infers field types from the first record, and registers
+   * the data source in the store.
+   */
   const handleAddJsonSource = () => {
     if (!newDsName.trim()) return;
     let parsedData: any[] = [];
     try {
       const raw = JSON.parse(jsonInput);
+      // Accept both arrays and single objects; wrap single objects in an array
       parsedData = Array.isArray(raw) ? raw : [raw];
     } catch {
       alert('JSON 格式不正确');
       return;
     }
+    // Infer field types from the first data record
     const fields = Object.keys(parsedData[0] || {}).map(key => ({
       name: key,
       type: typeof parsedData[0][key] === 'number' ? 'number' as const :
@@ -977,6 +1182,12 @@ const DataSourcePanel: React.FC = () => {
     setJsonInput('');
   };
 
+  /**
+   * Adds a new API data source from the user-provided URL and HTTP method.
+   * After adding, attempts to auto-discover fields by calling the backend
+   * discoverFields service. If the backend is unavailable, the data source
+   * is still created with empty fields.
+   */
   const handleAddApiSource = async () => {
     if (!newDsName.trim() || !apiUrl.trim()) return;
     const id = crypto.randomUUID?.() || Date.now().toString();
@@ -1011,6 +1222,11 @@ const DataSourcePanel: React.FC = () => {
     setApiUrl('');
   };
 
+  /**
+   * Adds a new database data source from the user-provided connection string and SQL query.
+   * After adding, attempts to execute the query via the backend discoverFields service
+   * to auto-populate fields and sample data. Falls back to empty fields if backend is unavailable.
+   */
   const handleAddDbSource = async () => {
     if (!newDsName.trim() || !dbConnStr.trim() || !dbQuery.trim()) return;
     const id = crypto.randomUUID?.() || Date.now().toString();
@@ -1042,6 +1258,10 @@ const DataSourcePanel: React.FC = () => {
     setDbQuery('');
   };
 
+  /**
+   * Tests the connection for the currently configured API or database data source.
+   * Displays a success/failure result message. JSON data sources require no testing.
+   */
   const handleTestConnection = async () => {
     setTesting(true);
     setTestResult(null);
@@ -1075,6 +1295,7 @@ const DataSourcePanel: React.FC = () => {
             <div className="ds-fields">
               {ds.fields.map(f => (
                 <span key={f.name} className="ds-field-tag" draggable onDragStart={e => {
+                  // Set drag data as {fieldName} format so elements can accept field drops
                   e.dataTransfer.setData('text/plain', `{${f.name}}`);
                 }}>
                   {f.name}
@@ -1193,6 +1414,7 @@ const DataSourcePanel: React.FC = () => {
           </div>
         )}
 
+        {/* Quick-load button: injects a built-in sample employee dataset for testing */}
         <button className="prop-btn" style={{ marginTop: 4 }} onClick={() => {
           const sampleData = [
             { name: '张三', department: '技术部', salary: 15000, age: 28, date: '2025-01-15' },
@@ -1221,6 +1443,17 @@ const DataSourcePanel: React.FC = () => {
   );
 };
 
+// ---------------------------------------------------------------------------
+// Utility Functions
+// ---------------------------------------------------------------------------
+
+/**
+ * Maps an element type string to its Chinese display label.
+ * Used in the element properties panel to show the element type as a badge.
+ *
+ * @param type - The element type identifier (e.g. 'text', 'rectangle')
+ * @returns The Chinese display label, or the raw type string if unrecognized
+ */
 function getTypeLabel(type: string): string {
   const map: Record<string, string> = {
     text: '文本', rectangle: '矩形', line: '线条', image: '图片',

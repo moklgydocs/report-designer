@@ -1,3 +1,14 @@
+/**
+ * @file elementFactory.ts
+ * Element factory and utility functions for the Report Designer.
+ *
+ * Provides:
+ * - Default style presets (font, borders, padding)
+ * - Factory function `createElement` to instantiate any of the 10 element types
+ * - Expression evaluator `evaluateExpression` for data-bound fields and formulas
+ * - Snap-to-grid and snap-guide computation helpers
+ * - Default table/chart data generators
+ */
 import { v4 as uuidv4 } from "uuid";
 import type {
   ReportElement,
@@ -20,6 +31,9 @@ import type {
   ChartData,
 } from "../types";
 
+/* ─── Default Style Presets ─── */
+
+/** Default font configuration: Microsoft YaHei 12pt, regular weight, dark gray */
 const defaultFont: FontConfig = {
   family: "Microsoft YaHei",
   size: 12,
@@ -29,6 +43,7 @@ const defaultFont: FontConfig = {
   color: "#333333",
 };
 
+/** Default borders: invisible (style "none") on all four sides */
 const defaultBorders: Borders = {
   top: { style: "none", width: 1, color: "#000000" },
   right: { style: "none", width: 1, color: "#000000" },
@@ -36,8 +51,12 @@ const defaultBorders: Borders = {
   left: { style: "none", width: 1, color: "#000000" },
 };
 
+/** Default padding: 2px top/bottom, 4px left/right */
 const defaultPadding: Padding = { top: 2, right: 4, bottom: 2, left: 4 };
 
+/* ─── Default Data Generators ─── */
+
+/** Creates a default 3-column × 2-row table with one header row and one data row */
 function createDefaultTable(): TableData {
   const cols: TableColumn[] = [
     { id: uuidv4(), width: 120 },
@@ -48,6 +67,7 @@ function createDefaultTable(): TableData {
   const dataRow: TableRow = { id: uuidv4(), height: 28, isHeader: false };
   const rows = [headerRow, dataRow];
 
+  // Generate cells: header row gets bold text on light background, data row is blank
   const cells: TableCell[][] = rows.map((_row, ri) =>
     cols.map((_col, ci) => ({
       id: uuidv4(),
@@ -77,10 +97,12 @@ function createDefaultTable(): TableData {
   return { columns: cols, rows, cells };
 }
 
+/** Creates default chart data with a single bar series and sample categories */
 function createDefaultChartData(): ChartData {
   return {
     chartType: "bar",
     title: "示例图表",
+    // Quarterly categories with two sample series
     categories: ["Q1", "Q2", "Q3", "Q4"],
     series: [
       { name: "销售额", data: [120, 200, 150, 180] },
@@ -89,11 +111,25 @@ function createDefaultChartData(): ChartData {
   };
 }
 
+/* ─── Element Factory ─── */
+
+/**
+ * Creates a new report element of the given type at the specified position.
+ *
+ * Each element type is initialized with sensible defaults (size, style, name).
+ * The returned element gets a unique ID and a zOrder based on the current timestamp.
+ *
+ * @param type - The element type to create (text, rectangle, line, image, barcode, qrcode, chart, table, subreport, crosstab)
+ * @param x    - Initial X position within the band
+ * @param y    - Initial Y position within the band
+ * @returns A fully-initialized ReportElement of the requested type
+ */
 export function createElement(
   type: ElementType,
   x: number,
   y: number,
 ): ReportElement {
+  // Common properties shared by all element types
   const base = {
     id: uuidv4(),
     x,
@@ -105,6 +141,7 @@ export function createElement(
   };
 
   switch (type) {
+    /* ─── Text ─── */
     case "text":
       return {
         ...base,
@@ -123,6 +160,7 @@ export function createElement(
         autoSize: false,
       } as TextElement;
 
+    /* ─── Rectangle ─── */
     case "rectangle":
       return {
         ...base,
@@ -137,6 +175,7 @@ export function createElement(
         borders: { ...defaultBorders },
       } as RectangleElement;
 
+    /* ─── Line ─── */
     case "line":
       return {
         ...base,
@@ -150,6 +189,7 @@ export function createElement(
         style: "solid",
       } as LineElement;
 
+    /* ─── Image ─── */
     case "image":
       return {
         ...base,
@@ -161,6 +201,7 @@ export function createElement(
         objectFit: "contain",
       } as ImageElement;
 
+    /* ─── Barcode ─── */
     case "barcode":
       return {
         ...base,
@@ -173,6 +214,7 @@ export function createElement(
         showText: true,
       } as BarcodeElement;
 
+    /* ─── QR Code ─── */
     case "qrcode":
       return {
         ...base,
@@ -185,6 +227,7 @@ export function createElement(
         size: 80,
       } as QRCodeElement;
 
+    /* ─── Chart ─── */
     case "chart":
       return {
         ...base,
@@ -196,6 +239,7 @@ export function createElement(
         backgroundColor: "#ffffff",
       } as ChartElement;
 
+    /* ─── Table ─── */
     case "table":
       return {
         ...base,
@@ -207,6 +251,7 @@ export function createElement(
         repeatHeader: true,
       } as TableElement;
 
+    /* ─── Sub-report ─── */
     case "subreport":
       return {
         ...base,
@@ -217,6 +262,7 @@ export function createElement(
         parameters: {},
       } as any;
 
+    /* ─── Cross-tab (pivot table) ─── */
     case "crosstab":
       return {
         ...base,
@@ -230,6 +276,7 @@ export function createElement(
         valueFunction: "sum",
       } as any;
 
+    // Fallback: create a text element for unknown types
     default:
       return {
         ...base,
@@ -250,8 +297,21 @@ export function createElement(
   }
 }
 
+/* ─── Expression Evaluation ─── */
+
 import { evaluateFormula } from "./formulaEngine";
 
+/**
+ * Evaluates a report expression (data field binding, formula, or built-in variable)
+ * against the provided data and rendering context.
+ *
+ * Delegates to the formula engine for parsing and evaluation.
+ *
+ * @param expression - The expression string (e.g. "{fieldName}", "=Sum(\"qty\")", "{PageNumber}")
+ * @param data       - The current row of data (for field bindings)
+ * @param context    - Rendering context providing page numbers, aggregated data, etc.
+ * @returns The evaluated result (string, number, or other type)
+ */
 export function evaluateExpression(
   expression: string,
   data?: any,
@@ -265,10 +325,21 @@ export function evaluateExpression(
   return evaluateFormula(expression, data, context);
 }
 
+/* ─── Display Mask & Format ─── */
+
 /**
  * Apply a display mask to a value.
- * '#' = digit placeholder, '*' = character placeholder, other = literal
- * Example: applyMask("13812345678", "###-####-####") => "138-1234-5678"
+ *
+ * Mask characters:
+ *   '#' = digit placeholder (replaced by the corresponding value character)
+ *   '*' = character placeholder (replaced by value char or '*' if no more chars)
+ *   Any other character = literal (inserted as-is into the output)
+ *
+ * @param value - The raw string value to mask
+ * @param mask  - The mask pattern
+ * @returns The masked string
+ *
+ * @example applyMask("13812345678", "###-####-####") => "138-1234-5678"
  */
 export function applyMask(value: string, mask: string): string {
   if (!mask || !value) return value;
@@ -288,8 +359,16 @@ export function applyMask(value: string, mask: string): string {
 
 /**
  * Apply a format string to a value.
- * Number: "#,##0.00", "0.00%", "#,##0"
- * Date: "yyyy-MM-dd", "yyyy/MM/dd HH:mm", "MM/dd/yyyy"
+ *
+ * Supports number formats and date formats:
+ * - Number: "#,##0.00", "0.00%", "#,##0", "0.00", "0%", or generic patterns with commas/decimals/percent
+ * - Date:   "yyyy-MM-dd", "yyyy/MM/dd HH:mm", "MM/dd/yyyy", etc.
+ *
+ * Values starting with "[" are treated as non-numeric (skip number formatting).
+ *
+ * @param value  - The raw string value to format
+ * @param format - The format pattern string
+ * @returns The formatted string, or the original value if no format matched
  */
 export function applyFormat(value: string, format: string): string {
   if (!format || !value) return value;
@@ -345,6 +424,14 @@ export function applyFormat(value: string, format: string): string {
   return value;
 }
 
+/* ─── CSS Conversion Utilities ─── */
+
+/**
+ * Converts a FontConfig object to a React CSS properties object.
+ *
+ * @param font - The font configuration to convert
+ * @returns CSS properties for fontFamily, fontSize, fontWeight, fontStyle, textDecoration, and color
+ */
 export function fontToCSS(font: FontConfig): React.CSSProperties {
   return {
     fontFamily: font.family,
@@ -356,7 +443,15 @@ export function fontToCSS(font: FontConfig): React.CSSProperties {
   };
 }
 
+/**
+ * Converts a Borders object to a React CSS properties object with per-side border strings.
+ * Borders with style "none" are converted to the CSS value "none".
+ *
+ * @param borders - The borders configuration to convert
+ * @returns CSS properties for borderTop, borderRight, borderBottom, and borderLeft
+ */
 export function bordersToCSS(borders: Borders): React.CSSProperties {
+  /** Helper: converts a single border side to a CSS border string, or "none" if hidden. */
   const toBorder = (b?: { style: string; width: number; color: string }) =>
     b && b.style !== "none" ? `${b.style} ${b.width}px ${b.color}` : "none";
   return {
@@ -367,10 +462,37 @@ export function bordersToCSS(borders: Borders): React.CSSProperties {
   };
 }
 
+/* ─── Snap-to-Grid & Snap-Guide Helpers ─── */
+
+/**
+ * Snaps a coordinate value to the nearest grid line.
+ *
+ * @param value    - The raw coordinate value
+ * @param gridSize - The grid spacing in pixels
+ * @returns The coordinate rounded to the nearest grid multiple
+ */
 export function snapToGrid(value: number, gridSize: number): number {
   return Math.round(value / gridSize) * gridSize;
 }
 
+/**
+ * Computes snap guides and adjusted position for a moving element relative to
+ * other elements and canvas edges.
+ *
+ * Checks 10 alignment scenarios (5 per axis):
+ *   - Edge-to-edge: left↔left, right↔right
+ *   - Adjacent:     left↔right, right↔left
+ *   - Center:       centerX↔centerX / centerY↔centerY
+ *   - Top/bottom analogues of the above
+ *
+ * Canvas edge targets include origin (0,0), far corner, and center point.
+ *
+ * @param movingEl     - The element being dragged (position + dimensions)
+ * @param allElements  - All other elements on the canvas to snap against
+ * @param threshold    - Maximum pixel distance for a snap to trigger (default 5px)
+ * @param canvasBounds - Optional canvas dimensions for edge/center snapping
+ * @returns An object with the snapped x/y position and an array of guide lines to render
+ */
 export function computeSnapGuides(
   movingEl: { x: number; y: number; width: number; height: number },
   allElements: { x: number; y: number; width: number; height: number }[],
@@ -385,39 +507,42 @@ export function computeSnapGuides(
   let snappedX = movingEl.x;
   let snappedY = movingEl.y;
 
+  // Pre-compute key reference points on the moving element
   const movingCX = movingEl.x + movingEl.width / 2;
   const movingCY = movingEl.y + movingEl.height / 2;
   const movingRight = movingEl.x + movingEl.width;
   const movingBottom = movingEl.y + movingEl.height;
 
-  // Canvas edge snap targets
+  // Build snap targets: canvas edges (origin, far corner, center) plus all other elements
   const edgeTargets: { x: number; y: number; width: number; height: number }[] =
     [];
   if (canvasBounds) {
-    // Left edge (x=0), right edge (x=canvasWidth), center (x=canvasWidth/2)
-    // Top edge (y=0), bottom edge (y=canvasHeight), center (y=canvasHeight/2)
-    edgeTargets.push({ x: 0, y: 0, width: 0, height: 0 }); // origin point
+    // Canvas edges and center serve as snap reference points
+    edgeTargets.push({ x: 0, y: 0, width: 0, height: 0 }); // top-left origin
     edgeTargets.push({
       x: canvasBounds.width,
       y: canvasBounds.height,
       width: 0,
       height: 0,
-    }); // far corner
+    }); // bottom-right corner
     edgeTargets.push({
       x: canvasBounds.width / 2,
       y: canvasBounds.height / 2,
       width: 0,
       height: 0,
-    }); // center
+    }); // canvas center
   }
 
   const snapTargets = [...allElements, ...edgeTargets];
 
+  // Check each target for horizontal (X) and vertical (Y) snap alignment
   for (const el of snapTargets) {
     const cx = el.x + el.width / 2;
     const cy = el.y + el.height / 2;
     const right = el.x + el.width;
     const bottom = el.y + el.height;
+
+    // ── Horizontal (X-axis) snaps ──
 
     // Snap left edges
     if (Math.abs(movingEl.x - el.x) < threshold) {
@@ -439,11 +564,14 @@ export function computeSnapGuides(
       snappedX = el.x - movingEl.width;
       guides.push({ type: "vertical", position: el.x });
     }
-    // Snap center X
+    // Snap center X (align horizontal midpoints)
     if (Math.abs(movingCX - cx) < threshold) {
       snappedX = cx - movingEl.width / 2;
       guides.push({ type: "vertical", position: cx });
     }
+
+    // ── Vertical (Y-axis) snaps ──
+
     // Snap top edges
     if (Math.abs(movingEl.y - el.y) < threshold) {
       snappedY = el.y;
@@ -464,7 +592,7 @@ export function computeSnapGuides(
       snappedY = el.y - movingEl.height;
       guides.push({ type: "horizontal", position: el.y });
     }
-    // Snap center Y
+    // Snap center Y (align vertical midpoints)
     if (Math.abs(movingCY - cy) < threshold) {
       snappedY = cy - movingEl.height / 2;
       guides.push({ type: "horizontal", position: cy });
