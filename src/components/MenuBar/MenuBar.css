@@ -1,0 +1,151 @@
+.menubar {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  background: #0f172a;
+  padding: 0 12px;
+  border-bottom: 1px solid #1e293b;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.menubar-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 16px;
+}
+
+.brand-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #60a5fa;
+  letter-spacing: -0.3px;
+}
+
+.menubar-items {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.menu-item {
+  position: relative;
+}
+
+.menu-btn {
+  padding: 4px 10px;
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s;
+
+  &:hover {
+    background: #1e293b;
+    color: #e2e8f0;
+  }
+}
+
+.has-dropdown:hover .menu-dropdown {
+  display: block;
+}
+
+.menu-dropdown {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 180px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 4px;
+  z-index: 1000;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+}
+
+.dropdown-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  color: #e2e8f0;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.1s;
+
+  &:hover {
+    background: #334155;
+  }
+}
+
+.dd-icon {
+  font-size: 14px;
+  width: 18px;
+  text-align: center;
+}
+
+.dropdown-divider {
+  height: 1px;
+  background: #334155;
+  margin: 4px 0;
+}
+
+.menu-divider {
+  width: 1px;
+  height: 20px;
+  background: #334155;
+  margin: 0 4px;
+}
+
+.menubar-spacer {
+  flex: 1;
+}
+
+.menubar-info {
+  display: flex;
+  align-items: center;
+}
+
+.report-name {
+  font-size: 11px;
+  color: #64748b;
+  font-style: italic;
+}
+
+.preview-menu-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  background: #065f46;
+  border: 1px solid #059669;
+  color: #6ee7b7;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+
+  &:hover {
+    background: #047857;
+    color: #a7f3d0;
+  }
+
+  &.active {
+    background: #991b1b;
+    border-color: #dc2626;
+    color: #fca5a5;
+
+    &:hover {
+      background: #b91c1c;
+    }
+  }
+}
